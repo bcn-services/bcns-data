@@ -81,7 +81,8 @@ const VIEW_NAMES = [
 ] as const satisfies readonly ViewName[]
 
 function viewBuilder<K extends ViewName>(client: SupabaseClient<Database, 'api'>, name: K) {
-  return () => client.from(name).select('*')
+  // `columns` narrows the fetched fields; rows stay typed as the full view row.
+  return (columns = '*') => client.from(name).select(columns as '*')
 }
 
 type ViewsNamespace = { [K in (typeof VIEW_NAMES)[number]]: ReturnType<typeof viewBuilder<K>> }
@@ -191,10 +192,6 @@ function buildMedia(client: SupabaseClient<Database, 'api'>, rpc: RpcNamespace, 
 
 // ---- createDataClient ---------------------------------------------------------------------------
 
-/** Internal-only: lets `runReadView` build a `.select(columns)` query without a public raw-client
- *  escape hatch. Not part of the DataClient type — accessed by symbol from within this module. */
-const RAW_VIEW_SELECT = Symbol('rawViewSelect')
-
 export interface DataClient {
   views: ViewsNamespace
   rpc: RpcNamespace
@@ -226,7 +223,6 @@ export function createDataClient(opts: CreateDataClientOptions): DataClient {
       if (error) throw new DataClientError(error)
       return data
     },
-    [RAW_VIEW_SELECT]: (name: ViewName, columns: string) => client.from(name).select(columns),
   } as DataClient
 }
 
@@ -532,7 +528,7 @@ async function runReadView(client: DataClient, input: any, opts?: AgentToolsOpti
     selectCols = [...needed].join(',')
   }
 
-  let q: any = (client as any)[RAW_VIEW_SELECT](view, selectCols)
+  let q: any = (client.views as Record<string, (columns?: string) => unknown>)[view](selectCols)
   for (const f of filters ?? []) q = q.eq(f.column, f.value)
   if (dateFrom !== undefined) q = q.gte(dateCol, checkDate(dateFrom, 'date_from'))
   if (dateTo !== undefined) {
