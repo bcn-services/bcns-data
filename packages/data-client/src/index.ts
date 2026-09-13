@@ -191,6 +191,10 @@ function buildMedia(client: SupabaseClient<Database, 'api'>, rpc: RpcNamespace, 
 
 // ---- createDataClient ---------------------------------------------------------------------------
 
+/** Internal-only: lets `runReadView` build a `.select(columns)` query without a public raw-client
+ *  escape hatch. Not part of the DataClient type — accessed by symbol from within this module. */
+const RAW_VIEW_SELECT = Symbol('rawViewSelect')
+
 export interface DataClient {
   views: ViewsNamespace
   rpc: RpcNamespace
@@ -222,7 +226,8 @@ export function createDataClient(opts: CreateDataClientOptions): DataClient {
       if (error) throw new DataClientError(error)
       return data
     },
-  }
+    [RAW_VIEW_SELECT]: (name: ViewName, columns: string) => client.from(name).select(columns),
+  } as DataClient
 }
 
 // ---- signIn (DESIGN.md §8 — agent/dashboard auth, no invite mail needed) -----------------------
@@ -348,6 +353,32 @@ const VIEW_DESCRIPTIONS: Record<ViewName, string> = {
 
 const COLUMN_RE = /^[a-z_][a-z0-9_]{0,62}$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+type RpcFieldSchema = { type: string; format?: string; items?: { type: string; format?: string }; maxItems?: number }
+
+/** Hand-written type/shape check for one RPC field against its schema — no schema library. */
+function checkRpcField(field: string, value: unknown, schema: RpcFieldSchema): void {
+  if (schema.type === 'string') {
+    if (typeof value !== 'string') throw new ToolInputError(`bad ${field}: expected string`)
+    if (schema.format === 'uuid' && !UUID_RE.test(value)) throw new ToolInputError(`bad ${field}: not a uuid`)
+  } else if (schema.type === 'object') {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new ToolInputError(`bad ${field}: expected object`)
+    }
+  } else if (schema.type === 'array') {
+    if (!Array.isArray(value)) throw new ToolInputError(`bad ${field}: expected array`)
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      throw new ToolInputError(`bad ${field}: exceeds max of ${schema.maxItems} items`)
+    }
+    for (const item of value) {
+      if (schema.items?.type === 'string') {
+        if (typeof item !== 'string') throw new ToolInputError(`bad ${field}: expected string items`)
+        if (schema.items.format === 'uuid' && !UUID_RE.test(item)) throw new ToolInputError(`bad ${field}: item not a uuid`)
+      }
+    }
+  }
+}
 
 function agentViews(opts?: AgentToolsOptions): AgentViewName[] {
   return opts?.views ?? DEFAULT_AGENT_VIEWS
@@ -404,9 +435,9 @@ const RPC_TOOL_SCHEMAS: Record<AgentRpcName, JSONSchemaObject> = {
   update_media: {
     type: 'object',
     properties: {
-      media_id: { type: 'string' },
+      media_id: { type: 'string', format: 'uuid' },
       title: { type: 'string' },
-      tags: { type: 'array', items: { type: 'string' } },
+      tags: { type: 'array', items: { type: 'string' }, maxItems: 50 },
     },
     required: ['media_id'],
     additionalProperties: false,
@@ -414,7 +445,7 @@ const RPC_TOOL_SCHEMAS: Record<AgentRpcName, JSONSchemaObject> = {
   bulk_tag: {
     type: 'object',
     properties: {
-      media_ids: { type: 'array', items: { type: 'string' }, maxItems: 500 },
+      media_ids: { type: 'array', items: { type: 'string', format: 'uuid' }, maxItems: 500 },
       add: { type: 'array', items: { type: 'string' } },
       remove: { type: 'array', items: { type: 'string' } },
     },
@@ -492,7 +523,16 @@ async function runReadView(client: DataClient, input: any, opts?: AgentToolsOpti
     throw new ToolInputError(`bad limit: ${limit}`)
   }
 
-  let q: any = (client.views as any)[view]()
+  // Select only what was asked for (plus the date column, if needed for order/range but not
+  // itself requested) instead of `select('*')` + client-side trimming.
+  let selectCols = '*'
+  if (columns !== undefined) {
+    const needed = new Set<string>(columns)
+    if (dateCol && (dateFrom !== undefined || dateTo !== undefined || order !== undefined)) needed.add(dateCol)
+    selectCols = [...needed].join(',')
+  }
+
+  let q: any = (client as any)[RAW_VIEW_SELECT](view, selectCols)
   for (const f of filters ?? []) q = q.eq(f.column, f.value)
   if (dateFrom !== undefined) q = q.gte(dateCol, checkDate(dateFrom, 'date_from'))
   if (dateTo !== undefined) {
@@ -504,7 +544,7 @@ async function runReadView(client: DataClient, input: any, opts?: AgentToolsOpti
 
   const { data, error } = await q
   if (error) throw new DataClientError(error)
-  const rows = columns ? (data as any[]).map((row) => Object.fromEntries(columns.map((c: string) => [c, row[c]]))) : data
+  const rows = data
   return { rows, count: rows.length, truncated: rows.length === rowLimit }
 }
 
@@ -524,6 +564,9 @@ export async function runTool(client: DataClient, name: string, input: unknown, 
   if (unknownKeys.length > 0) throw new ToolInputError(`unknown input keys: ${unknownKeys.join(', ')}`)
   for (const req of schema.required ?? []) {
     if (!(req in body)) throw new ToolInputError(`missing required field: ${req}`)
+  }
+  for (const [field, value] of Object.entries(body)) {
+    checkRpcField(field, value, schema.properties[field] as RpcFieldSchema)
   }
   return (client.rpc as any)[rpcName](body)
 }

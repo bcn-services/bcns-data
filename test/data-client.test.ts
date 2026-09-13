@@ -178,4 +178,39 @@ describe('agentTools / runTool', () => {
     expect(typeof id).toBe('string')
     await dc.rpc.delete_record({ record_id: id })
   })
+
+  it('rpc tool inputs are type/shape-validated at the trust boundary before reaching the DB', async () => {
+    const dc = await dataClientAs(USERS.acmeMember)
+    const uuid = () => '00000000-0000-4000-8000-' + Math.random().toString(16).slice(2).padEnd(12, '0').slice(0, 12)
+
+    // bulk_tag.media_ids: over the documented 500-item cap
+    await expect(
+      runTool(dc, 'bulk_tag', { media_ids: Array.from({ length: 501 }, uuid) }, { rpcs: ['bulk_tag'] }),
+    ).rejects.toBeInstanceOf(ToolInputError)
+
+    // bulk_tag.media_ids: wrong type (string instead of array)
+    await expect(
+      runTool(dc, 'bulk_tag', { media_ids: 'not-an-array' }, { rpcs: ['bulk_tag'] }),
+    ).rejects.toBeInstanceOf(ToolInputError)
+
+    // bulk_tag.media_ids: array of non-uuid-shaped strings
+    await expect(
+      runTool(dc, 'bulk_tag', { media_ids: ['not-a-uuid'] }, { rpcs: ['bulk_tag'] }),
+    ).rejects.toBeInstanceOf(ToolInputError)
+
+    // save_record.attributes: wrong type (array instead of object)
+    await expect(
+      runTool(dc, 'save_record', { kind: 'note', attributes: [] }, { rpcs: ['save_record'] }),
+    ).rejects.toBeInstanceOf(ToolInputError)
+
+    // update_media.tags: over the documented 50-item cap
+    await expect(
+      runTool(
+        dc,
+        'update_media',
+        { media_id: uuid(), tags: Array.from({ length: 51 }, (_, i) => `t${i}`) },
+        { rpcs: ['update_media'] },
+      ),
+    ).rejects.toBeInstanceOf(ToolInputError)
+  })
 })
