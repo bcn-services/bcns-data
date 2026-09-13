@@ -442,8 +442,8 @@ const RPC_TOOL_SCHEMAS: Record<AgentRpcName, JSONSchemaObject> = {
     type: 'object',
     properties: {
       media_ids: { type: 'array', items: { type: 'string', format: 'uuid' }, maxItems: 500 },
-      add: { type: 'array', items: { type: 'string' } },
-      remove: { type: 'array', items: { type: 'string' } },
+      add: { type: 'array', items: { type: 'string' }, maxItems: 50 },
+      remove: { type: 'array', items: { type: 'string' }, maxItems: 50 },
     },
     required: ['media_ids'],
     additionalProperties: false,

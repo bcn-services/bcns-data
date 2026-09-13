@@ -212,5 +212,10 @@ describe('agentTools / runTool', () => {
         { rpcs: ['update_media'] },
       ),
     ).rejects.toBeInstanceOf(ToolInputError)
+
+    // bulk_tag.add: over the 50-item cap
+    await expect(
+      runTool(dc, 'bulk_tag', { media_ids: [uuid()], add: Array.from({ length: 51 }, (_, i) => `t${i}`) }, { rpcs: ['bulk_tag'] }),
+    ).rejects.toBeInstanceOf(ToolInputError)
   })
 })
