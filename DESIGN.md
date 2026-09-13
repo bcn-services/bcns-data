@@ -1166,6 +1166,7 @@ null`. Only that client's rows are touched.
 |---|---|
 | `onboard --slug --name --timezone [--sources shopify,meta,monday,meet,drive]` | Inserts `clients`; creates the smoke user (`smoke+<slug>@bcn-services.com`, random password stored in the bcns password manager) + membership `is_smoke`; prompts for each source's credential (per the §9 checklist, refusing a Meta user token or non-Internal Google app by inspecting the token's `/debug_token` type and the OAuth client's audience), writes `source_tokens`; copies connector defaults into `connector_schedule` (`backfill_from = today − backfillDepth`, `backfill_cursor = {}`, `next_run_at = now()`); for Monday, auto-fills `config.columns`; for Meta, fills `account_timezone/currency` and warns on mismatch. |
 | `add-member --slug --email [--owner]` | Creates the auth user (invite email via Auth admin API) + membership. |
+| `add-member --slug --agent` | Mints/rotates the platform agent user (`agent+<slug>@bcn-services.com`, role member, `is_smoke = false`, no invite — `admin.createUser`/`updateUserById`, fresh password printed once). Mutually exclusive with `--email`/`--owner`. |
 | `import-media --slug --dir <folder> [--set <name>] [--tags a,b]` | Walks a folder, uploads each file to `orig`, registers it through `data.register_media(client_id, path, …)` — the same validation the RPC uses (§3.3) — optionally adds to a set. Idempotent on filename+size. |
 | `churn --slug` | `clients.status = churned`. Everything else follows from the hook and the claim query (R34). |
 | `export --slug --out <dir>` | CSV per canonical table, `raw.jsonl` (streamed **partition by partition** with a server-side cursor, never one result set), `files/` originals — all filtered by `client_id`. (R35) |
@@ -1285,6 +1286,9 @@ Design of the contract only; the template and package are separate repos.
 - Dashboard-side config (per client, dashboard `.env`): `SHOPIFY_ADMIN_URL`, `ADS_MANAGER_URL`,
   `MONDAY_BOARD_URL`, `MEET_URL`, `NOTES_URL`, `REPORT_HOUR` (06:00), `AI_MONTHLY_BUDGET_USD`,
   `RESEND_*`, `SMOKE_EMAIL/PASSWORD` (CI only). None of these is a platform fact.
+- Agents sign in as a per-client agent user (`agent+<slug>@bcn-services.com`, role member, minted
+  by `add-member --agent`) through `signIn`; `agentTools()/runTool` expose read views (+ opt-in
+  `save_record`/`update_media`/`bulk_tag`) — RLS is the only scope, same as a dashboard user.
 
 ## 9. Onboarding checklist (R31)
 

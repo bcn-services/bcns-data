@@ -4,14 +4,16 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sql, PNG_1x1 } from './helpers.js'
+import { localKeys, sql, SUPABASE_URL, PNG_1x1 } from './helpers.js'
 import { main as onboard } from '../scripts/onboard.js'
 import { main as setQuota } from '../scripts/set-quota.js'
 import { main as importMedia } from '../scripts/import-media.js'
+import { main as addMember } from '../scripts/add-member.js'
 import { main as churn } from '../scripts/churn.js'
 import { main as hardDelete } from '../scripts/hard-delete.js'
 import { main as exportClient } from '../scripts/export.js'
 import { checklist } from '../scripts/checklist.js'
+import { signIn } from '../packages/data-client/src/index.js'
 
 const SLUG = 'zz-script-test'
 const SLUG2 = 'zz-script-test2'
@@ -99,6 +101,50 @@ describe('scripts', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('add-member --agent creates a non-smoke member whose password signs in with the client_id claim, and re-run rotates it', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await addMember(['--slug', SLUG, '--agent'])
+
+      const email = `agent+${SLUG}@bcn-services.com`
+      const membership = await sql<{ role: string; is_smoke: boolean }>(
+        `select mem.role, mem.is_smoke from data.memberships mem join auth.users u on u.id = mem.user_id
+         where u.email = $1 and mem.client_id = $2`,
+        [email, clientId],
+      )
+      expect(membership.rowCount).toBe(1)
+      expect(membership.rows[0]).toEqual({ role: 'member', is_smoke: false })
+
+      const printed = log.mock.calls.map((c) => c.join(' ')).join('\n')
+      expect(printed).toContain(`agent user: ${email}`)
+      const passwordLine = log.mock.calls.map((c) => c.join(' ')).find((l) => l.startsWith('agent password'))!
+      const password1 = passwordLine.split(': ').slice(1).join(': ')
+
+      const dc1 = await signIn({ supabaseUrl: SUPABASE_URL, anonKey: localKeys().anon, email, password: password1 })
+      const claims = JSON.parse(Buffer.from((await dc1.accessToken()).split('.')[1], 'base64url').toString())
+      expect(claims.client_id).toBe(clientId)
+
+      log.mockClear()
+      await addMember(['--slug', SLUG, '--agent'])
+      const passwordLine2 = log.mock.calls.map((c) => c.join(' ')).find((l) => l.startsWith('agent password'))!
+      const password2 = passwordLine2.split(': ').slice(1).join(': ')
+      expect(password2).not.toBe(password1)
+
+      await expect(
+        signIn({ supabaseUrl: SUPABASE_URL, anonKey: localKeys().anon, email, password: password1 }),
+      ).rejects.toThrow(/sign-in failed/)
+      const dc2 = await signIn({ supabaseUrl: SUPABASE_URL, anonKey: localKeys().anon, email, password: password2 })
+      expect(await dc2.accessToken()).toBeTruthy()
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  it('add-member --agent rejects --email or --owner', async () => {
+    await expect(addMember(['--slug', SLUG, '--agent', '--email', 'x@example.com'])).rejects.toThrow(/usage/)
+    await expect(addMember(['--slug', SLUG, '--agent', '--owner'])).rejects.toThrow(/usage/)
   })
 
   it('churn sets status = churned and stamps churned_at', async () => {
