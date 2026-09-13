@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { createDataClient, DataClientError } from '../packages/data-client/src/index.js'
-import { CLIENTS, localKeys, mediaId, signIn, sql, SUPABASE_URL, USERS } from './helpers.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  agentTools, createDataClient, DataClientError, runTool, signIn as dcSignIn, ToolInputError,
+} from '../packages/data-client/src/index.js'
+import { CLIENTS, decodeJwt, localKeys, mediaId, signIn, sql, SUPABASE_URL, USERS } from './helpers.js'
 
 async function dataClientAs(user: (typeof USERS)[keyof typeof USERS]) {
   const { token } = await signIn(user)
@@ -78,5 +80,102 @@ describe('@bcn-services/data-client', () => {
 
     const n = await dc.rpc.delete_media({ media_ids: [mediaIdCreated] })
     expect(n).toBe(1)
+  })
+})
+
+describe('signIn', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('returns a client whose health() reads the seeded tenant', async () => {
+    const dc = await dcSignIn({ supabaseUrl: SUPABASE_URL, anonKey: localKeys().anon, ...USERS.acmeMember })
+    const health = await dc.health()
+    expect(health).toMatchObject({ client_id: CLIENTS.acme, slug: 'acme' })
+  })
+
+  it('rejects a bad password', async () => {
+    await expect(
+      dcSignIn({ supabaseUrl: SUPABASE_URL, anonKey: localKeys().anon, email: USERS.acmeMember.email, password: 'wrong' }),
+    ).rejects.toThrow(/sign-in failed/)
+  })
+
+  // NOTES: spec text expects 'access token has no client_id claim' (decodeClientId, reused here
+  // as defense-in-depth) for a no-membership user. Unreachable as written against this schema:
+  // custom_access_token_hook (20260912000200_access.sql:12) 403s sign-in at GoTrue *before* any
+  // session/token exists, so signInWithPassword itself errors — decodeClientId never runs. The
+  // reachable behavior is the generic 'sign-in failed: ...' path with the hook's own message.
+  it('USERS.nobody rejects at sign-in (no membership row, blocked by the access-token hook)', async () => {
+    await expect(dcSignIn({ supabaseUrl: SUPABASE_URL, anonKey: localKeys().anon, ...USERS.nobody })).rejects.toThrow(
+      /sign-in failed:.*no membership/,
+    )
+  })
+
+  it('refreshes when within 60s of expiry and shares one in-flight refresh across concurrent callers', async () => {
+    const dc = await dcSignIn({ supabaseUrl: SUPABASE_URL, anonKey: localKeys().anon, ...USERS.acmeMember })
+    const before = await dc.accessToken()
+    const { exp } = decodeJwt(before)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime((exp - 30) * 1000) // within 60s of expiry
+
+    const [a, b] = await Promise.all([dc.accessToken(), dc.accessToken()])
+    expect(a).toBe(b)
+    expect(a).not.toBe(before)
+
+    vi.useRealTimers()
+    const health = await dc.health()
+    expect(health.client_id).toBe(CLIENTS.acme)
+  })
+})
+
+describe('agentTools / runTool', () => {
+  it('default view list excludes customers_v1 and memberships_v1', () => {
+    const readView = agentTools().find((t) => t.name === 'read_view')!
+    const views = (readView.input_schema.properties as any).view.enum as string[]
+    expect(views).not.toContain('customers_v1')
+    expect(views).not.toContain('memberships_v1')
+    expect(views).toContain('money_v1')
+  })
+
+  it('read_view: tenant-scoped rows, date range + eq filter + limit honoured, truncated flag', async () => {
+    const dc = await dataClientAs(USERS.acmeMember)
+    const result = (await runTool(dc, 'read_view', {
+      view: 'money_v1',
+      filters: [{ column: 'client_id', value: CLIENTS.acme }],
+      date_from: '2000-01-01',
+      date_to: '2100-01-01',
+      limit: 1,
+    })) as { rows: any[]; count: number; truncated: boolean }
+    expect(result.rows.length).toBe(1)
+    expect(result.count).toBe(1)
+    expect(result.truncated).toBe(true)
+    for (const row of result.rows) expect(row.client_id).toBe(CLIENTS.acme)
+  })
+
+  it('read_view: bad column, unknown view, not-exposed view, and bad date all throw ToolInputError', async () => {
+    const dc = await dataClientAs(USERS.acmeMember)
+    await expect(runTool(dc, 'read_view', { view: 'money_v1', columns: ['bad col'] })).rejects.toBeInstanceOf(ToolInputError)
+    await expect(runTool(dc, 'read_view', { view: 'not_a_real_view' })).rejects.toBeInstanceOf(ToolInputError)
+    await expect(runTool(dc, 'read_view', { view: 'customers_v1' })).rejects.toBeInstanceOf(ToolInputError)
+    await expect(runTool(dc, 'read_view', { view: 'money_v1', date_from: '01/01/2024' })).rejects.toBeInstanceOf(ToolInputError)
+    await expect(runTool(dc, 'read_view', { view: 'client_v1', date_from: '2024-01-01' })).rejects.toBeInstanceOf(ToolInputError)
+  })
+
+  it('rpc tools are absent by default; save_record round-trips only when opted in', async () => {
+    const dc = await dataClientAs(USERS.acmeMember)
+    expect(agentTools().map((t) => t.name)).not.toContain('save_record')
+
+    await expect(
+      runTool(dc, 'save_record', { kind: 'note', attributes: {} }),
+    ).rejects.toBeInstanceOf(ToolInputError)
+
+    const externalId = `agent-tool-test-${Date.now()}`
+    const id = (await runTool(
+      dc,
+      'save_record',
+      { kind: 'note', attributes: { hello: 'agent' }, external_id: externalId, title: 'agent tool test' },
+      { rpcs: ['save_record'] },
+    )) as string
+    expect(typeof id).toBe('string')
+    await dc.rpc.delete_record({ record_id: id })
   })
 })
