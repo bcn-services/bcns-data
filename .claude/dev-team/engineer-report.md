@@ -33,4 +33,5 @@
 
 ## Fix pass (2026-09-14)
 - Region default `us-central1` → `us-east4`; `cloudresourcemanager.googleapis.com` added to step 1; step 7 guarded so an absent job skips it and step 8 still prints; `bcns-data-tick` SA added; repo/job-scoped deployer roles; `BCNS_ALERT_FROM` prompted (default `bot@bcn-services.com`) and set in the job env; `project_number()` memo now a real global; the three bare `read`s fail with a message on EOF; `docs/deploy-worker.md` `TASK_COUNT` and `.env.example` claims corrected.
-- Kept `--oauth-service-account-email` on the Scheduler job rather than `--oidc-...`: the target is a `*.googleapis.com` endpoint, which takes an OAuth access token.
+- Kept `--oauth-service-account-email` on the Scheduler job rather than `--oidc-...`: the target is a `*.googleapis.com` endpoint, which takes an OAuth access token. Accepted by the orchestrator.
+- Step 6 also binds project-level `roles/run.viewer` on the deployer SA: `gcloud run jobs update` polls its update operation and `run.operations.get` is only grantable at project scope. Read-only, so every write role the deployer holds stays resource-scoped.

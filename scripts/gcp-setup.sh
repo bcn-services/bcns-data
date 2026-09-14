@@ -232,15 +232,17 @@ create_job=(gcloud run jobs create "$JOB" --project "$PROJECT" --region "$REGION
   --task-timeout 600 --max-retries 0 --cpu 1 --memory 1Gi)
 grant_dev=(gcloud run jobs add-iam-policy-binding "$JOB" --project "$PROJECT" --region "$REGION"
   --member "serviceAccount:${DEPLOYER}" --role roles/run.developer)
+grant_ops=(gcloud projects add-iam-policy-binding "$PROJECT"
+  --member "serviceAccount:${DEPLOYER}" --role roles/run.viewer --condition None)
 show "${create_job[@]}"
 show "${grant_dev[@]}"
+show "${grant_ops[@]}"
 note "Google's placeholder image is a stand-in: deploy-worker.yml's \`jobs update\` replaces it with"
 note 'the real one on the first deploy, but it needs the job to already exist. Env and secrets are'
 note 'set here only — the workflow never touches them.'
-note "run.developer is scoped to this job, which covers the workflow's only Cloud Run call."
-note 'If that `jobs update` ever 403s while polling the operation rather than on the job itself, the'
-note "fallback is project scope: gcloud projects add-iam-policy-binding ${PROJECT} --member"
-note "serviceAccount:${DEPLOYER} --role roles/run.developer --condition None"
+note "run.developer is scoped to this job, which covers the workflow's only Cloud Run write."
+note 'run.viewer is project-wide because `jobs update` polls the update operation and run.operations.get'
+note 'is only grantable at project scope; it is read-only, so the deployer keeps no project-level write.'
 note "BCNS_ALERT_FROM=${ALERT_FROM} must be a Resend-verified sender or every alert send is rejected."
 if ask; then
   if [[ -z "${SUPABASE_URL:-}" || -z "${BCNS_ALERT_EMAIL:-}" ]]; then
@@ -252,6 +254,7 @@ if ask; then
       "${create_job[@]}"
     fi
     "${grant_dev[@]}"   # the job exists by here, either way
+    "${grant_ops[@]}"
   fi
 fi
 

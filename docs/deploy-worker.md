@@ -62,7 +62,9 @@ job, so re-running the setup script is never needed after a code change.
   otherwise defaults to 2. The setup script sets neither of these to a repo variable — it only
   sets the job env — so today both sides are 2 by coincidence of matching defaults, and a change
   has to touch both or the shards do not cover every client.
-- The deployer SA's roles are resource-scoped: `artifactregistry.writer` on the `bcns` repo,
+- The deployer SA's write roles are resource-scoped: `artifactregistry.writer` on the `bcns` repo,
   `run.developer` on the `bcns-data-worker` job, `iam.serviceAccountUser` on the runtime SA only.
+  Its one project-wide role is `roles/run.viewer`, which is read-only and carries the
+  `run.operations.get` that `gcloud run jobs update` needs to poll its update operation.
 - No service-account keys exist anywhere; GitHub authenticates by Workload Identity only, and the
   org policy `iam.managed.disableServiceAccountKeyCreation` blocks keys regardless.
