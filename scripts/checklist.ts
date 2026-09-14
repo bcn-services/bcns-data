@@ -1,6 +1,7 @@
 // DESIGN.md §9 onboarding checklist. One function per source: throws on a failed item (stops onboard),
 // returns config patches + warnings. `fetch` is injectable so the refusals are unit-testable offline.
 import type { Source } from '../worker/src/connectors/index.js'
+import { shopifyEndpoint } from '../worker/src/connectors/shopify-url.js'
 
 export interface Creds {
   secret: string; refresh_secret?: string; attributes?: Record<string, unknown>; config: Record<string, unknown>
@@ -23,8 +24,9 @@ export async function checklist(source: Source, tz: string, c: Creds, fetch: Fet
   const warnTz = (id: string, other: unknown) => { if (other && other !== tz) warnings.push(`${id}: ${source} timezone ${other} ≠ clients.timezone ${tz} (U2: confirm with the owner, record the choice in clients.notes)`) }
 
   if (source === 'shopify') {
-    if (!c.secret.startsWith('shpat_')) throw new Error('S1: not an Admin API token (shpat_)')
-    const url = `https://${c.config.shop}.myshopify.com/admin/api/2026-07/graphql.json`
+    // S1/S2 are decided by the scope query alone: both connection methods in docs/shopify-connection-method.md
+    // mint tokens with no documented prefix, so a prefix check would reject valid tokens.
+    const url = shopifyEndpoint(c.config.shop)
     const h = { 'X-Shopify-Access-Token': c.secret }
     const scopes = await gql(fetch, url, h, '{ currentAppInstallation { accessScopes { handle } } shop { ianaTimezone currencyCode } }')
     const have = new Set<string>((scopes.data?.currentAppInstallation?.accessScopes ?? []).map((s: any) => s.handle))

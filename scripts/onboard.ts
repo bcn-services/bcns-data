@@ -11,7 +11,7 @@ import { die, pgClient, serviceClient, isMain, runMain } from './_lib.js'
 
 // What the operator is asked for, per source (§4.2–§4.6 config + token shapes).
 const PROMPTS: Record<Source, { config: string[]; secret: string; refresh?: string; attribute?: string }> = {
-  shopify: { config: ['shop', 'admin_url'], secret: 'Admin API token (shpat_…)' },
+  shopify: { config: ['shop', 'admin_url'], secret: 'Admin API token' },
   meta: { config: ['act_id', 'ads_manager_url'], secret: 'system user token' },
   monday: { config: ['board_id', 'board_url'], secret: 'personal token' },
   meet: { config: ['folder_id', 'oauth_client_id', 'notes_url'], secret: 'access token (blank to mint from refresh)', refresh: 'refresh token', attribute: 'oauth_client_secret' },
