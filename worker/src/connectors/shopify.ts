@@ -19,16 +19,21 @@ const configSchema = z.object({
   sessions_mode: z.enum(['shopifyql', 'none']).default('none'),
 }).passthrough()
 
-const endpoint = (shop: string) =>
-  `https://${shop.includes('.') ? shop : `${shop}.myshopify.com`}/admin/api/${API_VERSION}/graphql.json`
+/** `foo`, `foo.myshopify.com`, `https://foo.myshopify.com/` → `foo`. The store handle is the first label. */
+export const shopHandle = (shop: unknown): string =>
+  String(shop ?? '').trim().replace(/^https?:\/\//i, '').split('/')[0].split('.')[0]
+
+/** Admin GraphQL endpoint for a `shop` in any of the forms an operator might type. Shared with scripts/checklist.ts. */
+export const shopifyEndpoint = (shop: unknown) =>
+  `https://${shopHandle(shop)}.myshopify.com/admin/api/${API_VERSION}/graphql.json`
 
 const adminUrl = (ctx: RunContext) =>
-  ctx.config.admin_url ?? `https://admin.shopify.com/store/${String(ctx.config.shop).split('.')[0]}`
+  ctx.config.admin_url ?? `https://admin.shopify.com/store/${shopHandle(ctx.config.shop)}`
 
 const numericId = (gid: string) => String(gid).split('/').pop() ?? gid
 
 async function gql(ctx: RunContext, query: string, variables: Json = {}): Promise<Json> {
-  const r = await ctx.fetch(endpoint(ctx.config.shop), {
+  const r = await ctx.fetch(shopifyEndpoint(ctx.config.shop), {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'X-Shopify-Access-Token': ctx.token.secret },
     body: JSON.stringify({ query, variables }),
