@@ -60,6 +60,18 @@ describe('catalog', () => {
     }
   })
 
+  // Mirrors hosted advisor lint 0011 function_search_path_mutable: every function in data/api
+  // must pin search_path, so a new one added without the clause fails here and not in production.
+  it('function_search_path_pinned', async () => {
+    const fns = await sql<{ name: string; pinned: boolean }>(
+      `select n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' name,
+              exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search\\_path=%') pinned
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname in ('data','api') order by 1`)
+    expect(fns.rows.length).toBeGreaterThan(25)
+    expect(fns.rows.filter(f => !f.pinned).map(f => f.name)).toEqual([])
+  })
+
   it('hook_mints_claims', async () => {
     const call = async (uid: string) => (await sql<{ out: any }>(
       `select public.custom_access_token_hook(jsonb_build_object('user_id', $1::text, 'claims', '{"role":"authenticated"}'::jsonb)) out`, [uid])).rows[0].out
