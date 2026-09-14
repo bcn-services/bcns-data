@@ -90,10 +90,11 @@ store.
    (`saunaboy-2` is Basic, 0 orders, password-protected).
 2. **Rehearse on a bcns dev store first:** install the same app on a dev store in our org, run the
    `curl` exchange, and run `add-source` against the local stack with that token.
-3. **Checklist S1 prefix:** `scripts/checklist.ts:26` rejects any token not starting `shpat_`.
-   Shopify does not document the prefix of OAuth offline or client-credentials tokens, so S1 may
-   reject a valid token. Follow-up PR once the method is chosen: drop the prefix check and let S1's
-   scope query decide (it already fails on missing scopes). Not changed here — it alters onboard.
+3. **Checklist S1 prefix — RESOLVED (2026-09-13).** The check was: `scripts/checklist.ts` rejected
+   any token not starting `shpat_`, and Shopify does not document the prefix of OAuth offline or
+   client-credentials tokens, so S1 could reject a valid token. The prefix check is now dropped —
+   S1/S2 are decided by the scope query alone, and the `shpat_` redaction in
+   `worker/src/connectors/index.ts` is kept. No prefix constraint remains on either method.
 4. **Redirect target:** pick the HTTPS page or the Nate-as-staff localhost install from Option A.
 
 ## Sources (checked 2026-09-12)

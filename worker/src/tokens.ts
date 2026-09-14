@@ -3,6 +3,7 @@ import { sql } from './db.js'
 import type { Tick } from './db.js'
 import { type RunContext, type Source, connectors, redact } from './connectors/index.js'
 import { contextFor, refreshOne } from './run.js'
+import { shopifyEndpoint } from './connectors/shopify-url.js'
 
 /** Only google_oauth_refresh has an expires_at, so the predicate skips the other kinds by itself. */
 export async function refreshTokens(t: Tick): Promise<number> {
@@ -27,7 +28,7 @@ const google = (ctx: RunContext) => ctx.fetch('https://www.googleapis.com/drive/
   headers: { Authorization: `Bearer ${ctx.token.secret}` },
 })
 const PROBES: Record<Source, (ctx: RunContext) => Promise<Response>> = {
-  shopify: ctx => ctx.fetch(`https://${ctx.config.shop}/admin/api/2026-07/graphql.json`, {
+  shopify: ctx => ctx.fetch(shopifyEndpoint(ctx.config.shop), {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'X-Shopify-Access-Token': ctx.token.secret },
     body: JSON.stringify({ query: '{ shop { id } }' }),

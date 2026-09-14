@@ -3,7 +3,7 @@
 // Also: a thumbnail copy that fails is retried next run (knownMedia = row with bytes or thumb) and then never again.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { localKeys, pool, sql, SUPABASE_URL } from './helpers.js'
+import { localKeys, pool, serviceClient, sql, SUPABASE_URL } from './helpers.js'
 import { closePool, type Tick } from '../worker/src/db.js'
 import { runOne, type ScheduleRow } from '../worker/src/run.js'
 
@@ -29,6 +29,16 @@ async function mkClient(): Promise<string> {
 
 afterAll(async () => {
   if (made.length) {
+    // Row deletes don't touch Storage: drop every object under each fixture client's prefix first,
+    // or the thumbnail copies outlive the client row (hard-delete does the same for a real client).
+    const objs = await sql<{ name: string }>(
+      `select name from storage.objects where bucket_id = 'media' and split_part(name, '/', 1) = any($1::text[])`, [made])
+    if (objs.rows.length) {
+      const { error } = await serviceClient().storage.from('media').remove(objs.rows.map(o => o.name))
+      if (error) throw new Error(`storage cleanup: ${error.message}`)
+    }
+    const left = await sql(`select name from storage.objects where bucket_id = 'media' and split_part(name, '/', 1) = any($1::text[])`, [made])
+    if (left.rows.length) throw new Error(`storage cleanup left ${left.rows.length} object(s): ${left.rows.map((r: any) => r.name).join(', ')}`)
     for (const t of ['media', 'raw', 'raw_latest']) await sql(`delete from data.${t} where client_id = any($1::uuid[])`, [made])
     await sql(`delete from data.clients where id = any($1::uuid[])`, [made])
   }
