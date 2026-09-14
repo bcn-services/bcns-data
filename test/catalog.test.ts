@@ -67,9 +67,24 @@ describe('catalog', () => {
       `select n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' name,
               exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search\\_path=%') pinned
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname in ('data','api') order by 1`)
-    expect(fns.rows.length).toBeGreaterThan(25)
+        where n.nspname in ('data','api','public') order by 1`)
+    expect(fns.rows.length).toBeGreaterThan(29)
     expect(fns.rows.filter(f => !f.pinned).map(f => f.name)).toEqual([])
+  })
+
+  // dt-review: the create branch of ensure_raw_partitions only runs when a month is missing, which
+  // never happens in CI (the schema migration seeds months 0..2). Drop the empty +2 partition and
+  // prove the dynamic SQL still creates, RLS-enables and un-grants it under the pinned search_path.
+  it('ensure_raw_partitions_creates_under_pinned_path', async () => {
+    const name = (await sql<{ p: string }>(
+      `select 'raw_' || to_char(date_trunc('month', now()) + interval '2 months', 'YYYY_MM') p`)).rows[0].p
+    await sql(`drop table data.${name}`)
+    await sql(`select data.ensure_raw_partitions()`)
+    const r = await sql<{ rls: boolean; force: boolean; anon: boolean; authed: boolean }>(
+      `select c.relrowsecurity rls, c.relforcerowsecurity force,
+              has_table_privilege('anon', c.oid, 'select') anon, has_table_privilege('authenticated', c.oid, 'select') authed
+         from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'data' and c.relname = $1`, [name])
+    expect(r.rows).toEqual([{ rls: true, force: true, anon: false, authed: false }])
   })
 
   it('hook_mints_claims', async () => {
