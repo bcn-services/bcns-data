@@ -28,9 +28,9 @@ each source is one `add-source` command. This doc is the checklist for that day.
 
 **Method pending** (see `docs/shopify-connection-method.md`). Recommended: **Option A** (OAuth
 install of bcns's Dev Dashboard app via a custom distribution link). Fallback: **Option B**
-(client-credentials app in SB's own org). Checklist **S1 currently requires a `shpat_` prefix** —
-if the chosen method mints a token without that prefix, S1 fails until a follow-up PR drops the
-prefix check (not done in this chunk; alters `onboard`/`checklist`).
+(client-credentials app in SB's own org). Checklist **S1 no longer checks the token prefix** — the
+scope query decides S1/S2 on its own, so a token from either method is accepted whatever it starts
+with.
 
 ### 2.1 What Declan sends
 
@@ -44,7 +44,7 @@ prefix check (not done in this chunk; alters `onboard`/`checklist`).
 
 | id | means | fix |
 |---|---|---|
-| S1 | token isn't `shpat_…`, or missing scopes | confirm scopes on the app match §4.2; if the token comes from OAuth/client-credentials and lacks `shpat_`, this is the known prefix gap — see method doc §"Checklist S1 prefix" |
+| S1 | missing scopes, or the token can't query the Admin API at all | confirm scopes on the app match §4.2, and that the token was installed on the live store |
 | S2 | `read_all_orders` not granted | re-grant the scope on the app, reinstall |
 | S3 | (informational — currency always set from `shop{currencyCode}`) | n/a, not a failure path |
 | S4 | (informational — sets `sessions_mode`, never throws) | n/a |
@@ -58,7 +58,7 @@ corepack pnpm tsx scripts/add-source.ts --slug sb --source shopify
 Prompts, in order:
 1. `shopify shop:` → the `*.myshopify.com` subdomain, e.g. `saunaboy-2`
 2. `shopify admin_url:` → `https://admin.shopify.com/store/saunaboy-2`
-3. `shopify Admin API token (shpat_…):` → the token from step 2.1
+3. `shopify Admin API token:` → the token from step 2.1 (any prefix; S1 checks scopes, not the prefix)
 
 ### 2.4 Confirm first pull
 

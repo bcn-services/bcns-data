@@ -5,8 +5,8 @@ import {
   type ProductRow, type RawRow, type RunContext, type CustomerRow,
   SourceError, localDay, minor, sleep,
 } from './index.js'
+import { shopHandle, shopifyEndpoint } from './shopify-url.js'
 
-const API_VERSION = '2026-07'
 const PAGE_ORDERS = 50
 const PAGE_PRODUCTS = 50
 const PAGE_PAYOUTS = 100
@@ -19,16 +19,13 @@ const configSchema = z.object({
   sessions_mode: z.enum(['shopifyql', 'none']).default('none'),
 }).passthrough()
 
-const endpoint = (shop: string) =>
-  `https://${shop.includes('.') ? shop : `${shop}.myshopify.com`}/admin/api/${API_VERSION}/graphql.json`
-
 const adminUrl = (ctx: RunContext) =>
-  ctx.config.admin_url ?? `https://admin.shopify.com/store/${String(ctx.config.shop).split('.')[0]}`
+  ctx.config.admin_url ?? `https://admin.shopify.com/store/${shopHandle(ctx.config.shop)}`
 
 const numericId = (gid: string) => String(gid).split('/').pop() ?? gid
 
 async function gql(ctx: RunContext, query: string, variables: Json = {}): Promise<Json> {
-  const r = await ctx.fetch(endpoint(ctx.config.shop), {
+  const r = await ctx.fetch(shopifyEndpoint(ctx.config.shop), {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'X-Shopify-Access-Token': ctx.token.secret },
     body: JSON.stringify({ query, variables }),

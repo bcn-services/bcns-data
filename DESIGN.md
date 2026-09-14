@@ -791,7 +791,7 @@ object per connector (documented in each section) and persisted every page.
 
 | | |
 |---|---|
-| Auth | Custom-app Admin API access token (`shpat_…`), header `X-Shopify-Access-Token`. `token_kind = shopify_admin`. Never expires; no refresh. |
+| Auth | Custom-app Admin API access token (usually `shpat_…`; no prefix is required, the checklist judges scopes), header `X-Shopify-Access-Token`. `token_kind = shopify_admin`. Never expires; no refresh. |
 | API | Admin **GraphQL** `https://<shop>.myshopify.com/admin/api/2026-07/graphql.json`. Scopes: `read_orders, read_all_orders (for >60 days of history), read_products, read_inventory, read_shopify_payments_payouts, read_reports, read_customers`. |
 | config | `{ shop: "saunaboy", admin_url: "https://admin.shopify.com/store/saunaboy", currency: "USD", store_timezone: "America/New_York", sessions_mode: "shopifyql" \| "none" }`. `currency` and `store_timezone` are refreshed from `shop { currencyCode ianaTimezone }` at every run start; a `store_timezone ≠ clients.timezone` mismatch is surfaced like Meta's (warning in health, onboarding U2). |
 | defaults | `interval = '1 hour'`, `backfillDepth = '13 months'`, `rateLimit = { concurrency: 1, minDelayMs: 0 }` + cost-aware throttle: read `extensions.cost.throttleStatus.currentlyAvailable`; sleep `(pageCost − available) / restoreRate` before the next page. |
@@ -1296,7 +1296,7 @@ Recorded by `scripts/onboard`; a failed item stops the script.
 
 | id | source | requirement |
 |---|---|---|
-| S1 | Shopify | Custom app in the client's store with scopes listed in §4.2; Admin API token (`shpat_`). |
+| S1 | Shopify | Custom app in the client's store with scopes listed in §4.2; Admin API token; S1 passes on the scope query, not on a token prefix. |
 | S2 | Shopify | `read_all_orders` granted (else backfill is capped at 60 days). |
 | S3 | Shopify | Store currency recorded in `config.currency`. |
 | S4 | Shopify | `shopifyqlQuery FROM sessions` probed once; result sets `config.sessions_mode`. |

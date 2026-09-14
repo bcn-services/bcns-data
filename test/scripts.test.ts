@@ -23,6 +23,13 @@ const SLUG3 = 'zz-script-test3'
 let clientId: string
 
 const archiveDir = mkdtempSync(join(tmpdir(), 'bcns-archive-'))
+
+// A Shopify scope query that grants every §4.2 scope. `scopes: []` drops them all (S2 failure).
+const shopifyScopes = (scopes = ['read_orders', 'read_all_orders', 'read_products', 'read_inventory',
+  'read_shopify_payments_payouts', 'read_reports', 'read_customers']) => ({
+  data: { currentAppInstallation: { accessScopes: scopes.map((handle) => ({ handle })) },
+    shop: { ianaTimezone: 'UTC', currencyCode: 'USD' } },
+})
 process.env.EXPORT_ARCHIVE_DIR = archiveDir
 
 afterAll(async () => {
@@ -272,18 +279,27 @@ describe('scripts', () => {
       .rejects.toThrow(/G1/)
     await expect(checklist('drive', 'UTC', { secret: '', refresh_secret: 'r', config: { oauth_client_id: 'bcns-app', folder_id: 'f' } }, json({})))
       .rejects.toThrow(/G1/)
-    await expect(checklist('shopify', 'UTC', { secret: 'nope', config: { shop: 's' } }, json({}))).rejects.toThrow(/S1/)
+    // S1 no longer gates on the shpat_ prefix: a prefix-less token reaches the scope query, which decides S1/S2
+    // alone. Also pins the shop-handle normalizer: `https://zz.myshopify.com/` builds the bare-handle endpoint.
+    const seen: { url?: string; token?: string } = {}
+    const shopifyOk = (async (url: unknown, init?: RequestInit) => {
+      seen.url = String(url)
+      seen.token = (init?.headers as Record<string, string>)?.['X-Shopify-Access-Token']
+      return new Response(JSON.stringify(shopifyScopes()))
+    }) as typeof globalThis.fetch
+    const sv = await checklist('shopify', 'UTC', { secret: 'atkn-oauth-no-prefix', config: { shop: 'https://zz.myshopify.com/' } }, shopifyOk)
+    expect(seen.token).toBe('atkn-oauth-no-prefix')
+    expect(seen.url).toBe('https://zz.myshopify.com/admin/api/2026-07/graphql.json')
+    expect(sv.config).toMatchObject({ store_timezone: 'UTC', currency: 'USD', sessions_mode: 'shopifyql' })
+    await expect(checklist('shopify', 'UTC', { secret: 'atkn-oauth-no-prefix', config: { shop: 'zz' } }, json({})))
+      .rejects.toThrow(/S2: missing scopes/)
     await expect(checklist('monday', 'UTC', { secret: 't', config: { board_id: '1' } }, json({ data: { boards: [{ columns: [{ id: 'c', title: 'Name', type: 'name' }] }] } })))
       .rejects.toThrow(/D1/)
   })
 
   describe('add-source', () => {
     const MONDAY_COLS = { data: { boards: [{ columns: [{ id: 'status', title: 'Status', type: 'status' }, { id: 'date4', title: 'Due', type: 'date' }] }] } }
-    const SHOPIFY_OK = {
-      data: { currentAppInstallation: { accessScopes: ['read_orders', 'read_all_orders', 'read_products', 'read_inventory',
-        'read_shopify_payments_payouts', 'read_reports', 'read_customers'].map((handle) => ({ handle })) },
-      shop: { ianaTimezone: 'UTC', currencyCode: 'USD' } },
-    }
+    const SHOPIFY_OK = shopifyScopes()
     // Stubs the vendor APIs the §9 checklist calls; everything else (local Supabase) goes to the real fetch.
     async function run(argv: string[], answers: string[]) { // answers in prompt order: config fields, then the secret
       const real = globalThis.fetch
@@ -291,7 +307,9 @@ describe('scripts', () => {
         const u = String(url)
         if (u.includes('api.monday.com')) return Promise.resolve(new Response(JSON.stringify(MONDAY_COLS)))
         if (u.includes('myshopify.com')) return Promise.resolve(new Response(JSON.stringify(
-          String(init?.body).includes('shopifyqlQuery') ? { data: { shopifyqlQuery: { __typename: 'TableResponse' } } } : SHOPIFY_OK)))
+          String(init?.body).includes('shopifyqlQuery') ? { data: { shopifyqlQuery: { __typename: 'TableResponse' } } }
+          : (init?.headers as Record<string, string>)?.['X-Shopify-Access-Token'] === 'no-scopes' ? shopifyScopes([])
+          : SHOPIFY_OK)))
         return real(url, init)
       })
       const out: string[] = []
@@ -356,7 +374,7 @@ describe('scripts', () => {
     it('refuses an unknown slug, an unknown source, a failed checklist, and a churned client', async () => {
       await expect(addSource(['--slug', 'zz-nope', '--source', 'monday'], async () => 'x')).rejects.toThrow(ScriptError)
       await expect(addSource(['--slug', SLUG3, '--source', 'upload'], async () => 'x')).rejects.toThrow(/unknown source/)
-      await expect(run(['--slug', SLUG3, '--source', 'shopify'], ['zz-test', 'https://admin.example', 'not-shpat'])).rejects.toThrow(/S1/)
+      await expect(run(['--slug', SLUG3, '--source', 'shopify'], ['zz-test', 'https://admin.example', 'no-scopes'])).rejects.toThrow(/S2/)
       expect((await tokens('shopify')).rows[0].secret).toBe('shpat_test') // failed checklist wrote nothing
       await sql(`update data.clients set status = 'churned' where slug = $1`, [SLUG3])
       await expect(addSource(['--slug', SLUG3, '--source', 'meta'], async () => 'x')).rejects.toThrow(/churned/)
