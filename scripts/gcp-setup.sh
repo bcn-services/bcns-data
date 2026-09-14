@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time GCP setup for the bcns-data worker (DESIGN §5.1): APIs, two service accounts,
+# One-time GCP setup for the bcns-data worker (DESIGN §5.1): APIs, three service accounts,
 # Workload Identity for GitHub Actions, Artifact Registry, Secret Manager, the Cloud Run
 # Job, and the Cloud Scheduler tick. Run it once, by hand, before the first deploy-worker
 # run. See docs/deploy-worker.md for the morning order.
@@ -7,12 +7,14 @@
 # Assumes:
 #   - gcloud is installed and `gcloud auth login` has been run as a principal that can
 #     administer IAM, Cloud Run, Artifact Registry, Secret Manager and Cloud Scheduler in
-#     GCP_PROJECT, and that the project exists with billing enabled.
+#     GCP_PROJECT, and that the project exists with billing enabled. Step 7 also needs
+#     iam.serviceAccounts.actAs on the tick SA — project Owner already has it.
 #   - The GitHub repo is bcn-services/bcns-data (that is where deploy-worker.yml lives).
 #   - SUPABASE_URL and BCNS_ALERT_EMAIL are exported before step 6. They go into the job's
 #     --set-env-vars, and the printed command has to be exactly what runs, so they come
-#     from the environment rather than a prompt. Every other worker env var has a default
-#     in worker/src (RUN_BUDGET_MS, CLAIM_LIMIT, EGRESS_ALLOWANCE_BYTES, ...).
+#     from the environment rather than a prompt. BCNS_ALERT_FROM is prompted for with a
+#     default. Every other worker env var has a default in worker/src (RUN_BUDGET_MS,
+#     CLAIM_LIMIT, EGRESS_ALLOWANCE_BYTES, ...).
 #
 # Never does:
 #   - Runs no gcloud command before you answer y. The `describe` existence checks also run
@@ -30,23 +32,34 @@
 set -euo pipefail
 
 REPO=bcn-services/bcns-data
-REGION_DEFAULT=us-central1   # assumption: pick the region closest to the Supabase project
+# us-east4 is the Cloud Run region closest to the Supabase project (AWS us-east-1).
+REGION_DEFAULT=us-east4
+ALERT_FROM_DEFAULT=bot@bcn-services.com
 
 PROJECT="${GCP_PROJECT:-}"
 REGION="${GCP_REGION:-}"
+ALERT_FROM="${BCNS_ALERT_FROM:-}"
 if [[ -z "$PROJECT" ]]; then
   printf 'GCP project id: '
-  read -r PROJECT
+  read -r PROJECT || { echo 'no input: set GCP_PROJECT and re-run' >&2; exit 1; }
 fi
 if [[ -z "$REGION" ]]; then
   printf 'GCP region [%s]: ' "$REGION_DEFAULT"
-  read -r REGION
+  read -r REGION || { echo 'no input: set GCP_REGION and re-run' >&2; exit 1; }
 fi
 REGION="${REGION:-$REGION_DEFAULT}"
+if [[ -z "$ALERT_FROM" ]]; then
+  # health.ts falls back to BCNS_ALERT_EMAIL when this is unset, and Resend rejects an
+  # unverified sender — every alert would burn an attempt and never land.
+  printf 'Resend-verified alert sender [%s]: ' "$ALERT_FROM_DEFAULT"
+  read -r ALERT_FROM || { echo 'no input: set BCNS_ALERT_FROM and re-run' >&2; exit 1; }
+fi
+ALERT_FROM="${ALERT_FROM:-$ALERT_FROM_DEFAULT}"
 [[ -n "$PROJECT" ]] || { echo 'GCP_PROJECT is required' >&2; exit 1; }
 
 DEPLOYER="bcns-data-deployer@${PROJECT}.iam.gserviceaccount.com"   # GitHub impersonates this one
 RUNTIME="bcns-data-worker@${PROJECT}.iam.gserviceaccount.com"      # the job runs as this one
+TICK="bcns-data-tick@${PROJECT}.iam.gserviceaccount.com"           # Cloud Scheduler calls as this one
 POOL=github
 PROVIDER=github
 AR_REPO=bcns
@@ -62,10 +75,11 @@ SECRET_ENV=(DATABASE_URL SUPABASE_SERVICE_ROLE_KEY RESEND_API_KEY)
 PRINCIPAL_SET="principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${REPO}"
 PROVIDER_RESOURCE="projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"
 PROJECT_NUMBER=''
+# Sets the PROJECT_NUMBER global once. Callers read the global, not a substitution — assigning
+# inside $( ) would run in a subshell and the memo would never survive.
 project_number() {
   [[ -n "$PROJECT_NUMBER" ]] ||
     PROJECT_NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
-  printf '%s' "$PROJECT_NUMBER"
 }
 
 step() { printf '\n== %s ==\n' "$*"; }
@@ -99,11 +113,13 @@ printf 'Nothing runs until you answer y. Answer n to skip a step.\n'
 step '1. Enable APIs'
 enable_apis=(gcloud services enable
   iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com
+  cloudresourcemanager.googleapis.com
   run.googleapis.com artifactregistry.googleapis.com
   cloudscheduler.googleapis.com secretmanager.googleapis.com
   --project "$PROJECT")
 show "${enable_apis[@]}"
 note 'already-enabled APIs are a no-op.'
+note 'cloudresourcemanager is what every `gcloud projects ...` call below goes through.'
 if ask; then "${enable_apis[@]}"; fi
 
 # ---------------------------------------------------------------- 2. Service accounts
@@ -112,26 +128,24 @@ create_deployer=(gcloud iam service-accounts create bcns-data-deployer --project
   --display-name 'bcns-data GitHub Actions deployer')
 create_runtime=(gcloud iam service-accounts create bcns-data-worker --project "$PROJECT"
   --display-name 'bcns-data Cloud Run Job runtime')
-grant_ar=(gcloud projects add-iam-policy-binding "$PROJECT"
-  --member "serviceAccount:${DEPLOYER}" --role roles/artifactregistry.writer --condition None)
-grant_run=(gcloud projects add-iam-policy-binding "$PROJECT"
-  --member "serviceAccount:${DEPLOYER}" --role roles/run.developer --condition None)
+create_tick=(gcloud iam service-accounts create bcns-data-tick --project "$PROJECT"
+  --display-name 'bcns-data Cloud Scheduler invoker')
 grant_actas=(gcloud iam service-accounts add-iam-policy-binding "$RUNTIME" --project "$PROJECT"
   --member "serviceAccount:${DEPLOYER}" --role roles/iam.serviceAccountUser)
 show "${create_deployer[@]}"
 show "${create_runtime[@]}"
-show "${grant_ar[@]}"
-show "${grant_run[@]}"
+show "${create_tick[@]}"
 show "${grant_actas[@]}"
-note "the runtime SA gets secretmanager.secretAccessor in step 5, per secret, not project-wide."
-note "artifactregistry.writer and run.developer are project-wide here; they can be narrowed to"
-note "the ${AR_REPO} repo and the ${JOB} job once both exist, if the project grows other ones."
+note "serviceAccountUser on ${RUNTIME} only: the workflow's \`jobs update\` has to keep the job's"
+note '--service-account, which counts as acting as it. No project-wide role is granted here.'
+note "the deployer's artifactregistry.writer and run.developer are bound in steps 4 and 6, scoped"
+note "to the ${AR_REPO} repo and the ${JOB} job. The runtime SA gets secretmanager.secretAccessor"
+note 'in step 5, per secret. The tick SA gets run.invoker on the one job in step 7, nothing else.'
 if ask; then
   exists gcloud iam service-accounts describe "$DEPLOYER" --project "$PROJECT" || "${create_deployer[@]}"
   exists gcloud iam service-accounts describe "$RUNTIME" --project "$PROJECT" || "${create_runtime[@]}"
-  "${grant_ar[@]}"      # add-iam-policy-binding is idempotent
-  "${grant_run[@]}"
-  "${grant_actas[@]}"
+  exists gcloud iam service-accounts describe "$TICK" --project "$PROJECT" || "${create_tick[@]}"
+  "${grant_actas[@]}"   # add-iam-policy-binding is idempotent
 fi
 
 # ---------------------------------------------------------------- 3. Workload Identity
@@ -155,7 +169,8 @@ if ask; then
     "${create_pool[@]}"
   exists gcloud iam workload-identity-pools providers describe "$PROVIDER" --project "$PROJECT" \
     --location global --workload-identity-pool "$POOL" || "${create_provider[@]}"
-  bind_wif[${#bind_wif[@]}-1]="${PRINCIPAL_SET/PROJECT_NUMBER/$(project_number)}"
+  project_number
+  bind_wif[${#bind_wif[@]}-1]="${PRINCIPAL_SET/PROJECT_NUMBER/$PROJECT_NUMBER}"
   "${bind_wif[@]}"
 fi
 
@@ -163,11 +178,17 @@ fi
 step "4. Artifact Registry docker repo ${AR_REPO}"
 create_ar=(gcloud artifacts repositories create "$AR_REPO" --project "$PROJECT"
   --location "$REGION" --repository-format docker --description 'bcns container images')
+grant_ar=(gcloud artifacts repositories add-iam-policy-binding "$AR_REPO" --project "$PROJECT"
+  --location "$REGION" --member "serviceAccount:${DEPLOYER}" --role roles/artifactregistry.writer)
 show "${create_ar[@]}"
+show "${grant_ar[@]}"
 note "deploy-worker.yml pushes ${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/${JOB}:<sha>."
+note "artifactregistry.writer is scoped to this repo, not the project — the binding needs the repo"
+note 'to exist, which is why it lives here and not in step 2.'
 if ask; then
   exists gcloud artifacts repositories describe "$AR_REPO" --project "$PROJECT" --location "$REGION" ||
     "${create_ar[@]}"
+  "${grant_ar[@]}"
 fi
 
 # ---------------------------------------------------------------- 5. Secrets
@@ -188,7 +209,7 @@ if ask; then
       note "$name already exists — keeping it."
     else
       printf '  value for %s (hidden): ' "$name"
-      read -rs value
+      read -rs value || { printf '\n'; echo "  no input for $name — aborting before a half-set secret." >&2; exit 1; }
       printf '\n'
       printf '%s' "$value" |
         gcloud secrets create "$name" --project "$PROJECT" --replication-policy automatic --data-file=-
@@ -201,7 +222,7 @@ fi
 
 # ---------------------------------------------------------------- 6. Cloud Run Job
 step "6. Cloud Run Job ${JOB}"
-job_env="SUPABASE_URL=${SUPABASE_URL:-<export SUPABASE_URL>},BCNS_ALERT_EMAIL=${BCNS_ALERT_EMAIL:-<export BCNS_ALERT_EMAIL>},TASK_COUNT=${TASK_COUNT}"
+job_env="SUPABASE_URL=${SUPABASE_URL:-<export SUPABASE_URL>},BCNS_ALERT_EMAIL=${BCNS_ALERT_EMAIL:-<export BCNS_ALERT_EMAIL>},BCNS_ALERT_FROM=${ALERT_FROM},TASK_COUNT=${TASK_COUNT}"
 job_secrets="DATABASE_URL=DATABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest"
 create_job=(gcloud run jobs create "$JOB" --project "$PROJECT" --region "$REGION"
   --image us-docker.pkg.dev/cloudrun/container/job
@@ -209,17 +230,28 @@ create_job=(gcloud run jobs create "$JOB" --project "$PROJECT" --region "$REGION
   --set-env-vars "$job_env" --set-secrets "$job_secrets"
   --tasks "$TASK_COUNT" --parallelism "$TASK_COUNT"
   --task-timeout 600 --max-retries 0 --cpu 1 --memory 1Gi)
+grant_dev=(gcloud run jobs add-iam-policy-binding "$JOB" --project "$PROJECT" --region "$REGION"
+  --member "serviceAccount:${DEPLOYER}" --role roles/run.developer)
 show "${create_job[@]}"
+show "${grant_dev[@]}"
 note "Google's placeholder image is a stand-in: deploy-worker.yml's \`jobs update\` replaces it with"
 note 'the real one on the first deploy, but it needs the job to already exist. Env and secrets are'
 note 'set here only — the workflow never touches them.'
+note "run.developer is scoped to this job, which covers the workflow's only Cloud Run call."
+note 'If that `jobs update` ever 403s while polling the operation rather than on the job itself, the'
+note "fallback is project scope: gcloud projects add-iam-policy-binding ${PROJECT} --member"
+note "serviceAccount:${DEPLOYER} --role roles/run.developer --condition None"
+note "BCNS_ALERT_FROM=${ALERT_FROM} must be a Resend-verified sender or every alert send is rejected."
 if ask; then
   if [[ -z "${SUPABASE_URL:-}" || -z "${BCNS_ALERT_EMAIL:-}" ]]; then
     echo '  skipped: export SUPABASE_URL and BCNS_ALERT_EMAIL, then re-run this step.' >&2
-  elif exists gcloud run jobs describe "$JOB" --project "$PROJECT" --region "$REGION"; then
-    note "${JOB} already exists — keeping it. Change env with \`gcloud run jobs update\`."
   else
-    "${create_job[@]}"
+    if exists gcloud run jobs describe "$JOB" --project "$PROJECT" --region "$REGION"; then
+      note "${JOB} already exists — keeping it. Change env with \`gcloud run jobs update\`."
+    else
+      "${create_job[@]}"
+    fi
+    "${grant_dev[@]}"   # the job exists by here, either way
   fi
 fi
 
@@ -227,20 +259,26 @@ fi
 step "7. Cloud Scheduler ${SCHEDULER_JOB} (*/5 * * * *)"
 run_uri="https://${REGION}-run.googleapis.com/v2/projects/${PROJECT}/locations/${REGION}/jobs/${JOB}:run"
 grant_invoker=(gcloud run jobs add-iam-policy-binding "$JOB" --project "$PROJECT" --region "$REGION"
-  --member "serviceAccount:${RUNTIME}" --role roles/run.invoker)
+  --member "serviceAccount:${TICK}" --role roles/run.invoker)
 create_sched=(gcloud scheduler jobs create http "$SCHEDULER_JOB" --project "$PROJECT"
   --location "$REGION" --schedule '*/5 * * * *' --time-zone Etc/UTC
   --uri "$run_uri" --http-method POST
-  --oauth-service-account-email "$RUNTIME")
+  --oauth-service-account-email "$TICK")
 show "${grant_invoker[@]}"
 show "${create_sched[@]}"
-note 'run.invoker is scoped to this one job. The runtime SA doubles as the scheduler identity so'
-note 'there is no third SA to manage; give Scheduler its own SA if that ever needs separating.'
+note "the tick SA holds run.invoker on this one job and nothing else — it is deliberately not the"
+note 'runtime SA, which can read DATABASE_URL, SUPABASE_SERVICE_ROLE_KEY and RESEND_API_KEY.'
+note "creating the scheduler job needs iam.serviceAccounts.actAs on ${TICK}; project Owner has it."
+note 'the target is a *.googleapis.com endpoint, so Scheduler sends an OAuth access token, not OIDC.'
 note 'Overlapping executions are fine by design (worker_leases, D23).'
 if ask; then
-  "${grant_invoker[@]}"
-  exists gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$PROJECT" --location "$REGION" ||
-    "${create_sched[@]}"
+  if exists gcloud run jobs describe "$JOB" --project "$PROJECT" --region "$REGION"; then
+    "${grant_invoker[@]}"
+    exists gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$PROJECT" --location "$REGION" ||
+      "${create_sched[@]}"
+  else
+    echo "  skipped: ${JOB} does not exist yet — run step 6 first, then re-run this step." >&2
+  fi
 fi
 
 # ---------------------------------------------------------------- 8. GitHub settings
@@ -258,7 +296,8 @@ note 'answer y to look PROJECT_NUMBER up with `gcloud projects describe` and rep
 note 'then run the four yourself — the script never touches GitHub. Merging to main deploys.'
 if ask; then
   printf '\n'
-  gh_settings "${PROVIDER_RESOURCE/PROJECT_NUMBER/$(project_number)}"
+  project_number
+  gh_settings "${PROVIDER_RESOURCE/PROJECT_NUMBER/$PROJECT_NUMBER}"
 fi
 
 printf '\nDone. Remaining manual steps are in docs/deploy-worker.md.\n'
