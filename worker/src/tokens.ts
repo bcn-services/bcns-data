@@ -3,7 +3,7 @@ import { sql } from './db.js'
 import type { Tick } from './db.js'
 import { type RunContext, type Source, connectors, redact } from './connectors/index.js'
 import { contextFor, refreshOne } from './run.js'
-import { shopifyEndpoint } from './connectors/shopify.js'
+import { shopifyEndpoint } from './connectors/shopify-url.js'
 
 /** Only google_oauth_refresh has an expires_at, so the predicate skips the other kinds by itself. */
 export async function refreshTokens(t: Tick): Promise<number> {

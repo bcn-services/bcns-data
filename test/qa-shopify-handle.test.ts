@@ -1,12 +1,7 @@
 // QA (item A4, criterion 1): shopHandle/shopifyEndpoint must normalize every shape an operator
 // might type to the same Admin GraphQL endpoint. Independent of engineer's own tests/fixtures.
 import { describe, expect, it } from 'vitest'
-// NB: `connectors/index.js` must load before `shopify.js` in a cold module graph -- see the
-// "shopify.js entry-point crash" finding in qa-report.md. Importing it first here (as every
-// real caller already happens to) keeps this file's own coverage of shopHandle unaffected by
-// that separate, already-reported fragility.
-import '../worker/src/connectors/index.js'
-import { shopHandle, shopifyEndpoint } from '../worker/src/connectors/shopify.js'
+import { shopHandle, shopifyEndpoint } from '../worker/src/connectors/shopify-url.js'
 
 const EXPECTED = 'https://foo.myshopify.com/admin/api/2026-07/graphql.json'
 

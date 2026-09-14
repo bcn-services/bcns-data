@@ -5,8 +5,8 @@ import {
   type ProductRow, type RawRow, type RunContext, type CustomerRow,
   SourceError, localDay, minor, sleep,
 } from './index.js'
+import { shopHandle, shopifyEndpoint } from './shopify-url.js'
 
-const API_VERSION = '2026-07'
 const PAGE_ORDERS = 50
 const PAGE_PRODUCTS = 50
 const PAGE_PAYOUTS = 100
@@ -18,14 +18,6 @@ const configSchema = z.object({
   store_timezone: z.string().optional(),
   sessions_mode: z.enum(['shopifyql', 'none']).default('none'),
 }).passthrough()
-
-/** `foo`, `foo.myshopify.com`, `https://foo.myshopify.com/` → `foo`. The store handle is the first label. */
-export const shopHandle = (shop: unknown): string =>
-  String(shop ?? '').trim().replace(/^https?:\/\//i, '').split('/')[0].split('.')[0]
-
-/** Admin GraphQL endpoint for a `shop` in any of the forms an operator might type. Shared with scripts/checklist.ts. */
-export const shopifyEndpoint = (shop: unknown) =>
-  `https://${shopHandle(shop)}.myshopify.com/admin/api/${API_VERSION}/graphql.json`
 
 const adminUrl = (ctx: RunContext) =>
   ctx.config.admin_url ?? `https://admin.shopify.com/store/${shopHandle(ctx.config.shop)}`

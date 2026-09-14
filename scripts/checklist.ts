@@ -1,7 +1,7 @@
 // DESIGN.md §9 onboarding checklist. One function per source: throws on a failed item (stops onboard),
 // returns config patches + warnings. `fetch` is injectable so the refusals are unit-testable offline.
 import type { Source } from '../worker/src/connectors/index.js'
-import { shopifyEndpoint } from '../worker/src/connectors/shopify.js'
+import { shopifyEndpoint } from '../worker/src/connectors/shopify-url.js'
 
 export interface Creds {
   secret: string; refresh_secret?: string; attributes?: Record<string, unknown>; config: Record<string, unknown>
