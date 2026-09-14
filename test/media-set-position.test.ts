@@ -62,6 +62,26 @@ describe('media_set_items.position', () => {
     ])
   })
 
+  it('re-adding an existing id alongside a new one leaves no gap', async () => {
+    const { client } = await signIn(USERS.acmeMember)
+    // acmeMedia[1] is already a member at 0; only acmeMedia[0]... is already a member too, so
+    // drop one first to have a genuinely new id to append.
+    expect((await client.rpc('set_media_set_items', { set_id: setId, media_ids: [acmeMedia[0]], action: 'remove' })).error).toBeNull()
+    expect((await positions()).map(r => r.media_id)).toEqual([acmeMedia[1], acmeMedia[2]])
+
+    // acmeMedia[2] is already in at position 1; acmeMedia[0] is new and must land at 2, not 3
+    const { data, error } = await client.rpc('set_media_set_items', {
+      set_id: setId, media_ids: [acmeMedia[2], acmeMedia[0]], action: 'add',
+    })
+    expect(error).toBeNull()
+    expect(data).toBe(1) // only the genuinely new row is inserted
+    expect(await positions()).toEqual([
+      { media_id: acmeMedia[1], position: 0 },
+      { media_id: acmeMedia[2], position: 1 },
+      { media_id: acmeMedia[0], position: 2 },
+    ])
+  })
+
   it('media_set_items_v1 exposes position and is ordered by it', async () => {
     const { client } = await signIn(USERS.acmeMember)
     const { data, error } = await client.from('media_set_items_v1').select('media_id, position').eq('set_id', setId)

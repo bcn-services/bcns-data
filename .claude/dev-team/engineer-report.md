@@ -33,6 +33,23 @@
 ## Flags for Reviewer
 - `reorder_media_set_items` runs four scans of `media_set_items` for one set (count, duplicate check, missing-member check, update). Bounded by set size, index-backed by the PK — fine for a Content Library, worth a single CTE if sets ever grow large.
 - Concurrent `set_media_set_items(action => 'add')` on the same set can compute the same `max(position)+1`. The deferrable unique turns that into a loud commit-time failure rather than duplicate positions; there is no row lock on the set, so a retry is the caller's job.
-- The add path leaves **gaps** in `position` when an id is already a member (`on conflict do nothing` skips the row but `row_number()` has consumed its slot). Ordering is unaffected; only "dense" is.
+- ~~The add path leaves **gaps**~~ — fixed in the QA fix pass: already-members are excluded from the insert by a `not exists` clause, so `row_number()` numbers only genuinely new rows. `on conflict on constraint media_set_items_pkey do nothing` stays for the concurrent case, which is the only path that can still gap.
 - `api.media_set_items_v1` now carries `order by`, which PostgREST callers can still override; the sort is backed by the new unique index.
 - Backfill is one full-table `update` on `data.media_set_items` at deploy time — trivial today, worth a batched run if that table is ever large.
+
+## QA fix pass (2026-09-14)
+
+QA (Sonnet 5) returned **VERDICT: PASS** at 101 passed / 1 todo, adding 15 tests in
+`test/media-set-position.qa.test.ts`. One finding actioned, one accepted as-is.
+
+### Changes
+- `supabase/migrations/20260914000200_media_set_position.sql` — the add branch now excludes rows already in the set (`and not exists (select 1 from data.media_set_items i where i.set_id = … and i.media_id = m.id)`) instead of leaving them to `ON CONFLICT`, so `row_number()` numbers only genuinely new rows and new members take contiguous positions after `max(position)`. The named arbiter stays for the concurrent case. Header comment corrected: dense per set, gaps only under a concurrent add.
+- `test/media-set-position.test.ts` — new test: re-adding an existing id alongside a new one returns `1` and puts the new id at `max+1` with no gap.
+- `test/media-set-position.qa.test.ts` — QA's re-add test observed and logged the position rather than asserting it; tightened to assert `2` and a contiguous `[0, 1, 2]`, and renamed off the "gap or no gap" phrasing.
+
+### Not changed
+- The duplicate-id clause in `api.reorder_media_set_items` stays. QA's mutation 2 showed it is unreachable given the length + coverage checks (pigeonhole), but it mirrors the item's spec text and costs nothing.
+
+### Verification
+- Mutation check on the fix: restored the pre-fix function body in-DB and re-ran both re-add tests — **2 failed**, `expected 3 to be 2`. Restored by `supabase db reset`.
+- Fresh `supabase db reset` → **102 passed / 1 todo** (11 files). `tsc --noEmit -p tsconfig.json` clean.

@@ -1,7 +1,8 @@
 -- bcns-data: explicit ordering for media-set members (DESIGN.md §3.2/§3.3).
 -- Adds data.media_set_items.position, backfills it from added_at, exposes it on
 -- api.media_set_items_v1, makes api.set_media_set_items append, and adds
--- api.reorder_media_set_items. Positions are 0-based and dense per set.
+-- api.reorder_media_set_items. Positions are 0-based and dense per set; only a concurrent
+-- add racing another can leave a gap, which the deferrable unique or a reorder resolves.
 
 alter table data.media_set_items add column position integer;
 
@@ -46,7 +47,13 @@ begin
       cross join (select coalesce(max(i.position) + 1, 0) as next from data.media_set_items i
                    where i.set_id = set_media_set_items.set_id and i.client_id = tenant) tail
      where m.id = any(media_ids) and m.client_id = tenant
-    -- named arbiter: the bare form would try the deferrable unique as an arbiter too, and a
+       -- already-members are excluded here, not left to ON CONFLICT, so row_number()
+       -- numbers only genuinely new rows and positions stay contiguous after max.
+       and not exists (select 1 from data.media_set_items i
+                        where i.set_id = set_media_set_items.set_id and i.client_id = tenant
+                          and i.media_id = m.id)
+    -- still needed for the concurrent case (two adds past the not-exists at once). Named
+    -- arbiter: the bare form would try the deferrable unique as an arbiter too, and a
     -- column-list arbiter re-parses set_id as an expression, colliding with the parameter.
     on conflict on constraint media_set_items_pkey do nothing;
   else

@@ -81,7 +81,7 @@ describe('media-set position: add path', () => {
     expect(rows.map(r => r.position)).toEqual([0, 1, 2])
   })
 
-  it('re-adding an existing member: reports observed position behavior (gap or no gap)', async () => {
+  it('re-adding an existing member leaves no gap: the new id lands at max+1', async () => {
     const setId = await makeSet('acme', [mediaId('acme', 1), mediaId('acme', 2)])
     const { client } = await signIn(USERS.acmeMember)
     // acme-2 already a member; add acme-2 (dup) + acme-3 (new) together
@@ -99,13 +99,11 @@ describe('media-set position: add path', () => {
     expect(rows.find(r => r.media_id === mediaId('acme', 2))!.position).toBe(1)
     const newRow = rows.find(r => r.media_id === mediaId('acme', 3))
     expect(newRow, 'new member inserted').toBeDefined()
-    // FINDING (see report): tail.next was computed as max(position)+1 = 2 before the insert
-    // attempted both rows; acme-3's row_number() among {acme-2 dup, acme-3} assigns it position
-    // 2 or 3 depending on array_position ordering of the two candidate rows. Assert the actual
-    // observed value and flag as a finding if it leaves a gap (i.e. lands above 2).
-    expect(data).toBe(1) // one row actually inserted (dup no-ops via ON CONFLICT)
-    // report the raw value for the QA report rather than assume 2:
-    console.log('QA-FINDING re-add-existing: acme-3 landed at position', newRow!.position, 'existing max was 1 -> expected contiguous next=2')
+    // the add branch excludes already-members from the insert, so row_number() numbers only
+    // genuinely new rows: acme-3 is the single insert and takes max(position)+1 = 2, no gap.
+    expect(data).toBe(1)
+    expect(newRow!.position).toBe(2)
+    expect(rows.map(r => r.position)).toEqual([0, 1, 2])
   })
 })
 
