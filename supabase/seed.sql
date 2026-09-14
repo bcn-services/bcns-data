@@ -104,8 +104,10 @@ begin
     end loop;
     for i in 1..3 loop
       insert into data.media_sets (client_id, name, description) values (c.id, 'Set '||i, 'Seed set '||i) returning id into sid;
-      insert into data.media_set_items (client_id, set_id, media_id)
-        select c.id, sid, id from data.media where client_id = c.id;
+      -- distinct added_at so position order is verifiable against insertion order
+      insert into data.media_set_items (client_id, set_id, media_id, added_at, position)
+        select c.id, sid, m.id, now() + (m.rn * interval '1 second'), (m.rn - 1)::int
+          from (select id, row_number() over (order by id) rn from data.media where client_id = c.id) m;
     end loop;
   end loop;
 end $$;

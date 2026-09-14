@@ -111,6 +111,7 @@ const RPC_NAMES = [
   'update_media_set',
   'delete_media_set',
   'set_media_set_items',
+  'reorder_media_set_items',
   'download_url',
   'report_dashboard_version',
   'remove_member',

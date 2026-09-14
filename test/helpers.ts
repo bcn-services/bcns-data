@@ -117,6 +117,7 @@ export const RPC_ARGS: Record<string, { args: Record<string, unknown>; expect: '
   update_media_set: { args: { set_id: null, name: 'x' }, expect: 'BCNS4' }, // set_id filled at runtime
   delete_media_set: { args: { set_id: null }, expect: 'BCNS4' },
   set_media_set_items: { args: { set_id: null, media_ids: [mediaId('beta', 1)], action: 'remove' }, expect: 'BCNS4' },
+  reorder_media_set_items: { args: { set_id: null, media_ids: [mediaId('beta', 1)] }, expect: 'BCNS4' },
   download_url: { args: { media_id: mediaId('beta', 1) }, expect: 'BCNS4' },
   report_dashboard_version: { args: { app_version: '0', api_version: 'v1' }, expect: 'none' },
   remove_member: { args: { target_user_id: USERS.betaMember.id }, expect: 'BCNS4' },
@@ -128,7 +129,7 @@ export async function betaRpcArgs() {
   const set = await sql(`select id from data.media_sets where client_id = $1 order by name limit 1`, [CLIENTS.beta])
   const out = structuredClone(RPC_ARGS)
   out.delete_record.args.record_id = rec.rows[0].id
-  for (const k of ['update_media_set', 'delete_media_set', 'set_media_set_items']) out[k].args.set_id = set.rows[0].id
+  for (const k of ['update_media_set', 'delete_media_set', 'set_media_set_items', 'reorder_media_set_items']) out[k].args.set_id = set.rows[0].id
   return out
 }
 

@@ -157,6 +157,7 @@
     "added_at": "timestamp with time zone",
     "client_id": "uuid",
     "media_id": "uuid",
+    "position": "integer",
     "set_id": "uuid",
     "source": "source",
     "updated_at": "timestamp with time zone"

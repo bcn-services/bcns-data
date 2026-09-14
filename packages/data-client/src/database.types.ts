@@ -585,6 +585,7 @@ export type Database = {
           added_at: string | null
           client_id: string | null
           media_id: string | null
+          position: number | null
           set_id: string | null
           source:
             | "shopify"
@@ -602,6 +603,7 @@ export type Database = {
           added_at?: string | null
           client_id?: string | null
           media_id?: string | null
+          position?: number | null
           set_id?: string | null
           source?: never
           updated_at?: string | null
@@ -610,6 +612,7 @@ export type Database = {
           added_at?: string | null
           client_id?: string | null
           media_id?: string | null
+          position?: number | null
           set_id?: string | null
           source?: never
           updated_at?: string | null
@@ -1265,6 +1268,10 @@ export type Database = {
         Returns: string
       }
       remove_member: { Args: { target_user_id: string }; Returns: undefined }
+      reorder_media_set_items: {
+        Args: { media_ids: string[]; set_id: string }
+        Returns: undefined
+      }
       report_dashboard_version: {
         Args: { api_version: string; app_version: string }
         Returns: undefined
