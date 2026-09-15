@@ -791,7 +791,7 @@ object per connector (documented in each section) and persisted every page.
 
 | | |
 |---|---|
-| Auth | Custom-app Admin API access token (usually `shpat_…`; no prefix is required, the checklist judges scopes), header `X-Shopify-Access-Token`. `token_kind = shopify_admin`. Never expires; no refresh. |
+| Auth | Admin API access token (`shpat_…` from a merchant custom app, `shpua_…` from an OAuth install; no prefix is required, the checklist judges scopes), header `X-Shopify-Access-Token`. `token_kind = shopify_admin`. Never expires; no refresh. |
 | API | Admin **GraphQL** `https://<shop>.myshopify.com/admin/api/2026-07/graphql.json`. Scopes: `read_orders, read_all_orders (for >60 days of history), read_products, read_inventory, read_shopify_payments_payouts, read_reports, read_customers`. |
 | config | `{ shop: "saunaboy", admin_url: "https://admin.shopify.com/store/saunaboy", currency: "USD", store_timezone: "America/New_York", sessions_mode: "shopifyql" \| "none" }`. `currency` and `store_timezone` are refreshed from `shop { currencyCode ianaTimezone }` at every run start; a `store_timezone ≠ clients.timezone` mismatch is surfaced like Meta's (warning in health, onboarding U2). |
 | defaults | `interval = '1 hour'`, `backfillDepth = '13 months'`, `rateLimit = { concurrency: 1, minDelayMs: 0 }` + cost-aware throttle: read `extensions.cost.throttleStatus.currentlyAvailable`; sleep `(pageCost − available) / restoreRate` before the next page. |
@@ -835,6 +835,8 @@ harmless). `payout` and `sessions_day` keep their own keys the same way.
 `shopifyqlQuery` (`read_reports` scope) *may* accept `FROM sessions`; it is verified once at
 integration setup (checklist item S4, §9). If it works, `config.sessions_mode = 'shopifyql'` and
 the metric flows; if not, `'none'` and `conversion_rate` is null → **Needs Nate N1**.
+ShopifyQL also needs protected customer data Level 2 on the app (rehearsal 2026-09-14: `ACCESS_DENIED`
+without it); S4 warns on that case so it is not mistaken for a plan limit.
 
 ### 4.3 Meta Ads
 
@@ -1299,7 +1301,8 @@ Recorded by `scripts/onboard`; a failed item stops the script.
 | S1 | Shopify | Custom app in the client's store with scopes listed in §4.2; Admin API token; S1 passes on the scope query, not on a token prefix. |
 | S2 | Shopify | `read_all_orders` granted (else backfill is capped at 60 days). |
 | S3 | Shopify | Store currency recorded in `config.currency`. |
-| S4 | Shopify | `shopifyqlQuery FROM sessions` probed once; result sets `config.sessions_mode`. |
+| S4 | Shopify | `shopifyqlQuery FROM sessions` probed once; result sets `config.sessions_mode`. An `ACCESS_DENIED` result is a warning: protected customer data Level 2 is missing, not a plan limit. |
+| S6 | Shopify | `orders(first:1){ customer{id email displayName} }` readable; `ACCESS_DENIED` fails (protected customer data Level 2 — name, email — not granted on the app; the order pull would fail on it). |
 | S5 | Shopify | `shop { ianaTimezone currencyCode }` read; `config.store_timezone`/`currency` set; mismatch with `clients.timezone` is a warning shown to the operator (same treatment as M3). |
 | M1 | Meta | Token is a **system user** token: `/debug_token` reports `type = "SYSTEM_USER"` (a `USER` type fails the checklist). |
 | M2 | Meta | System user has `ads_read` on the ad account; `act_<id>` readable. |

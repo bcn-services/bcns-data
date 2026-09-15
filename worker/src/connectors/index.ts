@@ -116,7 +116,7 @@ export const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 export function redact(message: string): string {
   return message
     .replace(/access_token=[^&\s]*/gi, 'access_token=***')
-    .replace(/shpat_\w+/g, 'shpat_***')
+    .replace(/(shp[a-z]{2}_)\w+/g, '$1***') // shpat_ custom-app, shpua_ OAuth install, shpca_/shppa_/shpss_
     .replace(/Bearer\s+\S+/gi, 'Bearer ***')
     .replace(/(x-shopify-access-token|authorization)\s*[:=]\s*\S+/gi, '$1: ***')
     .replace(/\?\S*/g, '')

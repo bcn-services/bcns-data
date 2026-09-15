@@ -28,6 +28,8 @@ How it works:
      --data-urlencode "expiring=0"
    ```
    Response: `access_token`, `scope`. With `expiring=0` there is no `refresh_token`/`expires_in`.
+   **Confirmed 2026-09-14** on the `bcns-data-dev` rehearsal: response keys were `access_token` and
+   `scope` only; the token starts `shpua_`.
 5. `add-source --slug sb --source shopify` stores it exactly like today's token.
 
 Facts that make this fit:
@@ -37,6 +39,19 @@ Facts that make this fit:
   public apps by 2027-01-01). Shopify: *"This doesn't apply to custom apps or apps created by
   merchants."* So a custom-distribution app may keep a non-expiring offline token.
 - Result: `token_kind = shopify_admin`, no refresh, **no worker or schema change**.
+
+Learned on the 2026-09-14 rehearsal:
+- Keep **Use legacy install flow** on in the app version. The `code`/`hmac` redirect in step 4 is
+  the authorization-code flow; a Shopify-managed install sends no `code`.
+- `read_all_orders` can only be requested **after** a distribution is chosen (Partner Dashboard →
+  API access requests: "Choose your distribution model before requesting"). So S2 fails on a
+  dev-store rehearsal by design; choose custom distribution for SB's domain first, then request it.
+- **Protected customer data Level 2 (name, email) is required.** The order pull reads
+  `customer{id email displayName}` and ShopifyQL needs Level 2; without it both return
+  `ACCESS_DENIED`. Partner Dashboard → API access requests → Protected customer data access →
+  step 1. Only App Store apps are reviewed; checklist S6 (fails) and S4 (warns) catch it.
+- The method choice is permanent (*"You can't change the distribution method after you select
+  it"*), so every client needs its own app.
 
 Costs and risks:
 - We need a `redirect_uri` that must exactly match one configured on the app. HTTP is allowed only on
@@ -88,8 +103,11 @@ store.
 1. **Link check (Nate, 5 min):** create the app, generate a custom distribution link for SB's
    confirmed live store domain. Refused → switch to B. Also confirm with Declan which store is live
    (`saunaboy-2` is Basic, 0 orders, password-protected).
-2. **Rehearse on a bcns dev store first:** install the same app on a dev store in our org, run the
-   `curl` exchange, and run `add-source` against the local stack with that token.
+2. **Rehearse on a bcns dev store first — DONE 2026-09-14** (`bcns-data-dev`, app version
+   `bcns-data-3`, 6 scopes): hmac + state OK, exchange returned no `expires_in`/`refresh_token`,
+   S1 PASS, S2 FAIL as expected (see "Learned" above), S4 `ACCESS_DENIED` → Level 2 needed. Re-run
+   after Level 2 is granted, and again with all 7 scopes once `read_all_orders` is approved.
+   Token prefix is `shpua_`; `redact()` now masks every `shp??_` prefix.
 3. **Checklist S1 prefix — RESOLVED (2026-09-13).** The check was: `scripts/checklist.ts` rejected
    any token not starting `shpat_`, and Shopify does not document the prefix of OAuth offline or
    client-credentials tokens, so S1 could reject a valid token. The prefix check is now dropped —

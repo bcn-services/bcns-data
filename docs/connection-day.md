@@ -45,9 +45,10 @@ with.
 | id | means | fix |
 |---|---|---|
 | S1 | missing scopes, or the token can't query the Admin API at all | confirm scopes on the app match §4.2, and that the token was installed on the live store |
-| S2 | `read_all_orders` not granted | re-grant the scope on the app, reinstall |
+| S2 | `read_all_orders` not granted | re-grant the scope on the app, reinstall. Shopify only takes the `read_all_orders` request after the app's distribution is chosen, so S2 cannot pass on a dev-store rehearsal |
 | S3 | (informational — currency always set from `shop{currencyCode}`) | n/a, not a failure path |
-| S4 | (informational — sets `sessions_mode`, never throws) | n/a |
+| S4 | (informational — sets `sessions_mode`, never throws). Warns when ShopifyQL is `ACCESS_DENIED`: that is missing protected customer data Level 2, not a plan limit | grant Level 2 (see S6), rerun add-source |
+| S6 | order customer fields (`customer{id email displayName}`) `ACCESS_DENIED`: protected customer data Level 2 not granted | Partner Dashboard → app → API access requests → Protected customer data access → step 1: select data use + Name, Email; rerun add-source |
 | S5 | (informational — sets `store_timezone`; a mismatch is a **warning**, not a failure) | if warned, resolve via U2 |
 
 ### 2.3 Exact command + prompts
@@ -58,7 +59,7 @@ corepack pnpm tsx scripts/add-source.ts --slug sb --source shopify
 Prompts, in order:
 1. `shopify shop:` → the `*.myshopify.com` subdomain, e.g. `saunaboy-2`
 2. `shopify admin_url:` → `https://admin.shopify.com/store/saunaboy-2`
-3. `shopify Admin API token:` → the token from step 2.1 (any prefix; S1 checks scopes, not the prefix)
+3. `shopify Admin API token:` → the token from step 2.1 (an OAuth install gives `shpua_…`; S1 checks scopes, not the prefix)
 
 ### 2.4 Confirm first pull
 

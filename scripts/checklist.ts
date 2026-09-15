@@ -34,8 +34,15 @@ export async function checklist(source: Source, tz: string, c: Creds, fetch: Fet
     if (missing.length) throw new Error(`${missing.includes('read_all_orders') ? 'S2' : 'S1'}: missing scopes ${missing.join(', ')}`)
     config.store_timezone = scopes.data.shop.ianaTimezone; config.currency = scopes.data.shop.currencyCode // S3, S5
     warnTz('S5', config.store_timezone)
+    // Protected customer data Level 2 gates both the order customer fields (ORDER_FIELDS in shopify.ts) and ShopifyQL.
+    const denied = (b: any) => (b.errors ?? []).some((e: any) => e.extensions?.code === 'ACCESS_DENIED')
+    const cust = await gql(fetch, url, h, '{ orders(first: 1) { nodes { customer { id email displayName } } } }')
+    // The worker throws on any GraphQL error (shopify.ts), so S6 does too.
+    if (denied(cust)) throw new Error('S6: order customer fields denied: grant protected customer data Level 2 (name, email) on the app')
+    if (cust.errors) throw new Error(`S6: orders query failed: ${cust.errors.map((e: any) => e.extensions?.code ?? e.message).join(', ')}`)
     const probe = await gql(fetch, url, h, '{ shopifyqlQuery(query: "FROM sessions SHOW sessions SINCE -1d UNTIL today") { __typename } }')
     config.sessions_mode = probe.errors ? 'none' : 'shopifyql' // S4
+    if (denied(probe)) warnings.push('S4: shopifyqlQuery denied: protected customer data Level 2 not granted, so sessions_mode is none')
   }
 
   if (source === 'meta') {
