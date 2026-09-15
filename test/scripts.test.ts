@@ -307,7 +307,7 @@ describe('scripts', () => {
         const u = String(url)
         if (u.includes('api.monday.com')) return Promise.resolve(new Response(JSON.stringify(MONDAY_COLS)))
         if (u.includes('myshopify.com')) return Promise.resolve(new Response(JSON.stringify(
-          String(init?.body).includes('shopifyqlQuery') ? { data: { shopifyqlQuery: { __typename: 'TableResponse' } } }
+          String(init?.body).includes('shopifyqlQuery') ? { data: { shopifyqlQuery: { parseErrors: [], tableData: { rows: [] } } } }
           : (init?.headers as Record<string, string>)?.['X-Shopify-Access-Token'] === 'no-scopes' ? shopifyScopes([])
           : SHOPIFY_OK)))
         return real(url, init)

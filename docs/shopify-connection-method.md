@@ -46,10 +46,15 @@ Learned on the 2026-09-14 rehearsal:
 - `read_all_orders` can only be requested **after** a distribution is chosen (Partner Dashboard →
   API access requests: "Choose your distribution model before requesting"). So S2 fails on a
   dev-store rehearsal by design; choose custom distribution for SB's domain first, then request it.
-- **Protected customer data Level 2 (name, email) is required.** The order pull reads
-  `customer{id email displayName}` and ShopifyQL needs Level 2; without it both return
-  `ACCESS_DENIED`. Partner Dashboard → API access requests → Protected customer data access →
+- **Protected customer data Level 2 is required.** The order pull reads
+  `customer{id email displayName}` (needs Name + Email); ShopifyQL needs all four fields (Name,
+  Email, Phone, Address). Without them each returns `ACCESS_DENIED`. Partner Dashboard → API access requests → Protected customer data access →
   step 1. Only App Store apps are reviewed; checklist S6 (fails) and S4 (warns) catch it.
+- **ShopifyQL (API ≥ 2025-10) returns `ShopifyqlQueryResponse { parseErrors tableData { columns rows } }`**,
+  rows keyed by column name; query mistakes land in `parseErrors`, not GraphQL `errors`. Daily
+  grouping is `TIMESERIES day` (bare `BY day` is a parse error). Dev store returned
+  `day:DAY_TIMESTAMP, sessions:INTEGER, conversion_rate:PERCENT`. Values are strings; `PERCENT` is a
+  0–1 fraction (`bounce_rate "1.0"` = both of a day's 2 sessions bounced); days with no sessions are `null`.
 - The method choice is permanent (*"You can't change the distribution method after you select
   it"*), so every client needs its own app.
 
@@ -106,7 +111,8 @@ store.
 2. **Rehearse on a bcns dev store first — DONE 2026-09-14** (`bcns-data-dev`, app version
    `bcns-data-3`, 6 scopes): hmac + state OK, exchange returned no `expires_in`/`refresh_token`,
    S1 PASS, S2 FAIL as expected (see "Learned" above), S4 `ACCESS_DENIED` → Level 2 needed. Re-run
-   after Level 2 is granted, and again with all 7 scopes once `read_all_orders` is approved.
+   after Level 2 (all four fields): S6 PASS, S4 returns sessions + conversion_rate rows. Re-run
+   again with all 7 scopes once `read_all_orders` is approved.
    Token prefix is `shpua_`; `redact()` now masks every `shp??_` prefix.
 3. **Checklist S1 prefix — RESOLVED (2026-09-13).** The check was: `scripts/checklist.ts` rejected
    any token not starting `shpat_`, and Shopify does not document the prefix of OAuth offline or

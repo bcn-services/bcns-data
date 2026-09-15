@@ -805,7 +805,7 @@ Pulls (each is one `entity` in raw):
 | `product` | `products(first:50, after, sortKey: UPDATED_AT, query)` | `updated_at:>=<since>` (backfill: no filter) | `Product.id` | `Product.updatedAt` |
 | `payout` | `shopifyPaymentsAccount { payouts(first:100, after) }` | none on the API — page newest-first, stop at `issuedAt < since` | `ShopifyPaymentsPayout.id` | `issuedAt` |
 | `inventory_snapshot` | derived: sum of `variants.inventoryQuantity` over all products, **only when `daily_metrics` has no `(shopify, today, 'store', 'store', 'inventory_units')` row yet** (the worker passes `ctx.hasMetricToday('inventory_units')`; the metric upsert for this one metric is `on conflict do nothing`, so the first run of the local day wins) | — | `<YYYY-MM-DD>` | run time |
-| `sessions_day` | `shopifyqlQuery("FROM sessions SHOW sessions, conversion_rate BY day SINCE <from> UNTIL today")` **only if `config.sessions_mode = 'shopifyql'`** | `SINCE <since − 2 days>` | `<YYYY-MM-DD>` | run time |
+| `sessions_day` | `shopifyqlQuery("FROM sessions SHOW sessions, conversion_rate TIMESERIES day SINCE <from> UNTIL today")` **only if `config.sessions_mode = 'shopifyql'`** | `SINCE <since − 2 days>` | `<YYYY-MM-DD>` | run time |
 
 Fields fetched on `order`: `id name createdAt updatedAt processedAt cancelledAt displayFinancialStatus
 displayFulfillmentStatus currencyCode totalPriceSet{shopMoney{amount currencyCode}}
@@ -822,7 +822,7 @@ Normalize (`shopMoney` always; amounts are decimal strings → `round(amount * 1
 | `money` kind `payout` | `external_id = Payout.id`, `occurred_at = issuedAt`, `amount_minor = net.amount`, `status`, `attributes = { transaction_type, summary }`. |
 | `customers` | from `order.customer`: `external_id = Customer.id`, `email`, `name = displayName`; `first_order_at = min(occurred_at)`, `orders_count`, `total_spent_minor` recomputed by the worker per run from `money` for the touched customers (SQL aggregate, idempotent). |
 | `products` | `external_id = Product.id`, `title, handle, status, vendor, product_type`, `price_minor = min(variants.price)`, `inventory_quantity = sum(variants.inventoryQuantity)`, `variants_count`, `image_url = featuredMedia.preview.image.url`, `url = <admin_url>/products/<id>`, `attributes = { variants: [{id,sku,title,price_minor,inventory_quantity}] }`. |
-| `daily_metrics` | `inventory_snapshot` → `(shopify, day, 'store', 'store', 'inventory_units', sum)`; `sessions_day` → `('sessions', n)` and `('conversion_rate', pct/100)` when present. |
+| `daily_metrics` | `inventory_snapshot` → `(shopify, day, 'store', 'store', 'inventory_units', sum)`; `sessions_day` → `('sessions', n)` and `('conversion_rate', value)` when non-null (ShopifyQL `PERCENT` is already a 0–1 fraction). |
 
 Backfill: orders `created_at:>=` 13 months, ≈ 260 pages for SB (R27); `backfill_cursor = { entity,
 after }` advanced per page; on cost throttling the worker sleeps within its budget and resumes next
@@ -835,8 +835,12 @@ harmless). `payout` and `sessions_day` keep their own keys the same way.
 `shopifyqlQuery` (`read_reports` scope) *may* accept `FROM sessions`; it is verified once at
 integration setup (checklist item S4, §9). If it works, `config.sessions_mode = 'shopifyql'` and
 the metric flows; if not, `'none'` and `conversion_rate` is null → **Needs Nate N1**.
-ShopifyQL also needs protected customer data Level 2 on the app (rehearsal 2026-09-14: `ACCESS_DENIED`
-without it); S4 warns on that case so it is not mistaken for a plan limit.
+ShopifyQL also needs protected customer data Level 2 with all four fields (Name, Email, Phone,
+Address; rehearsal 2026-09-14: `ACCESS_DENIED` without them); S4 warns on that case so it is not
+mistaken for a plan limit. The response is `parseErrors` + `tableData.rows` keyed by column name;
+a non-empty `parseErrors` throws in the worker and makes S4 set `'none'` with a warning. `PERCENT`
+values are 0–1 fraction strings (rehearsal: `bounce_rate "1.0"` on a day with 2 sessions), stored
+as-is; days with no sessions return `null` and store no `conversion_rate` row, so the view falls back.
 
 ### 4.3 Meta Ads
 
@@ -1301,7 +1305,7 @@ Recorded by `scripts/onboard`; a failed item stops the script.
 | S1 | Shopify | Custom app in the client's store with scopes listed in §4.2; Admin API token; S1 passes on the scope query, not on a token prefix. |
 | S2 | Shopify | `read_all_orders` granted (else backfill is capped at 60 days). |
 | S3 | Shopify | Store currency recorded in `config.currency`. |
-| S4 | Shopify | `shopifyqlQuery FROM sessions` probed once; result sets `config.sessions_mode`. An `ACCESS_DENIED` result is a warning: protected customer data Level 2 is missing, not a plan limit. |
+| S4 | Shopify | The worker's own sessions query (`sessionsQuery` in `shopify-url.ts`) probed once; result sets `config.sessions_mode`. `ACCESS_DENIED` warns (protected customer data Level 2, all four fields, is missing, not a plan limit); `parseErrors` warns (query text rejected). |
 | S6 | Shopify | `orders(first:1){ customer{id email displayName} }` readable; `ACCESS_DENIED` fails (protected customer data Level 2 — name, email — not granted on the app; the order pull would fail on it). |
 | S5 | Shopify | `shop { ianaTimezone currencyCode }` read; `config.store_timezone`/`currency` set; mismatch with `clients.timezone` is a warning shown to the operator (same treatment as M3). |
 | M1 | Meta | Token is a **system user** token: `/debug_token` reports `type = "SYSTEM_USER"` (a `USER` type fails the checklist). |
@@ -1345,7 +1349,7 @@ Nate's answers. The build follows these; the original options stay below for the
 Original items:
 
 - **N1 — Conversion rate source.** The Shopify Admin API exposes no sessions or conversion
-  metric on any plan; `shopifyqlQuery FROM sessions` is undocumented and is probed at onboarding
+  metric on any plan; `shopifyqlQuery FROM sessions` (documented from API 2025-10; returned rows on the dev store 2026-09-14) is probed at onboarding
   (S4). If the probe fails, the tile shows "—". Options: (a) accept "—" and tell Declan (quote
   already hedges); (b) add a GA4 sessions connector (new source, ~1 day); (c) use Meta clicks as a
   proxy (wrong number, not recommended). Default in this design: (a).

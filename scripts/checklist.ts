@@ -1,7 +1,7 @@
 // DESIGN.md §9 onboarding checklist. One function per source: throws on a failed item (stops onboard),
 // returns config patches + warnings. `fetch` is injectable so the refusals are unit-testable offline.
 import type { Source } from '../worker/src/connectors/index.js'
-import { shopifyEndpoint } from '../worker/src/connectors/shopify-url.js'
+import { Q_SHOPIFYQL, sessionsQuery, shopifyEndpoint } from '../worker/src/connectors/shopify-url.js'
 
 export interface Creds {
   secret: string; refresh_secret?: string; attributes?: Record<string, unknown>; config: Record<string, unknown>
@@ -11,8 +11,8 @@ type Fetch = typeof globalThis.fetch
 
 const SHOPIFY_SCOPES = ['read_orders', 'read_all_orders', 'read_products', 'read_inventory', 'read_shopify_payments_payouts', 'read_reports', 'read_customers']
 
-async function gql(fetch: Fetch, url: string, headers: Record<string, string>, query: string): Promise<any> {
-  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ query }) })
+async function gql(fetch: Fetch, url: string, headers: Record<string, string>, query: string, variables?: Record<string, unknown>): Promise<any> {
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ query, variables }) })
   const b: any = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
   return b
@@ -40,9 +40,12 @@ export async function checklist(source: Source, tz: string, c: Creds, fetch: Fet
     // The worker throws on any GraphQL error (shopify.ts), so S6 does too.
     if (denied(cust)) throw new Error('S6: order customer fields denied: grant protected customer data Level 2 (name, email) on the app')
     if (cust.errors) throw new Error(`S6: orders query failed: ${cust.errors.map((e: any) => e.extensions?.code ?? e.message).join(', ')}`)
-    const probe = await gql(fetch, url, h, '{ shopifyqlQuery(query: "FROM sessions SHOW sessions SINCE -1d UNTIL today") { __typename } }')
-    config.sessions_mode = probe.errors ? 'none' : 'shopifyql' // S4
-    if (denied(probe)) warnings.push('S4: shopifyqlQuery denied: protected customer data Level 2 not granted, so sessions_mode is none')
+    // S4 runs the worker's own sessions query; ShopifyQL mistakes come back in parseErrors, not errors.
+    const probe = await gql(fetch, url, h, Q_SHOPIFYQL, { q: sessionsQuery('-1d') })
+    const parseErrors: string[] = probe.data?.shopifyqlQuery?.parseErrors ?? []
+    config.sessions_mode = probe.errors || parseErrors.length ? 'none' : 'shopifyql' // S4
+    if (denied(probe)) warnings.push('S4: shopifyqlQuery denied: protected customer data Level 2 (name, email, phone, address) not granted, so sessions_mode is none')
+    else if (parseErrors.length) warnings.push(`S4: ShopifyQL rejected the sessions query (${parseErrors[0].slice(0, 200)}), so sessions_mode is none`)
   }
 
   if (source === 'meta') {

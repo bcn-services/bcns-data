@@ -1,4 +1,4 @@
-// Shopify URL helpers with no imports: safe to load from scripts before the connector registry
+// Shopify helpers with no imports: safe to load from scripts before the connector registry
 // (connectors/index.ts <-> shopify.ts is a cycle that only tolerates index.ts as the entry point).
 export const API_VERSION = '2026-07'
 
@@ -10,3 +10,6 @@ export const shopHandle = (shop: unknown): string =>
 export const shopifyEndpoint = (shop: unknown) =>
   `https://${shopHandle(shop)}.myshopify.com/admin/api/${API_VERSION}/graphql.json`
 
+/** ShopifyQL daily sessions + conversion rate. Shared by the worker (sessions_day) and checklist S4 so the probe runs the real query. */
+export const Q_SHOPIFYQL = 'query Q($q:String!){shopifyqlQuery(query:$q){parseErrors tableData{rows}}}'
+export const sessionsQuery = (since: string) => `FROM sessions SHOW sessions, conversion_rate TIMESERIES day SINCE ${since} UNTIL today`

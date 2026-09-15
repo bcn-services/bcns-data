@@ -5,7 +5,7 @@ import {
   type ProductRow, type RawRow, type RunContext, type CustomerRow,
   SourceError, localDay, minor, sleep,
 } from './index.js'
-import { shopHandle, shopifyEndpoint } from './shopify-url.js'
+import { Q_SHOPIFYQL, sessionsQuery, shopHandle, shopifyEndpoint } from './shopify-url.js'
 
 const PAGE_ORDERS = 50
 const PAGE_PRODUCTS = 50
@@ -103,11 +103,15 @@ async function fetchPage(ctx: RunContext, entity: string, since: Date | null, fr
     if (ctx.config.sessions_mode !== 'shopifyql') return { raw: [], after: null, hasNext: false }
     const start = since ?? from ?? new Date(Date.now() - 7 * 864e5)
     const sinceDay = localDay(new Date(start.getTime() - 2 * 864e5), ctx.timezone)
-    const d = await gql(ctx, `query Q($q:String!){shopifyqlQuery(query:$q){__typename ... on TableResponse{tableData{rowData columns{name dataType}}}}}`,
-      { q: `FROM sessions SHOW sessions, conversion_rate BY day SINCE ${sinceDay} UNTIL today` })
-    const rows: Json[] = d?.shopifyqlQuery?.tableData?.rowData ?? []
+    const d = await gql(ctx, Q_SHOPIFYQL, { q: sessionsQuery(sinceDay) })
+    // ShopifyQL reports query mistakes in parseErrors, not GraphQL errors, so gql() doesn't throw on them.
+    const parseErrors: string[] = d?.shopifyqlQuery?.parseErrors ?? []
+    if (parseErrors.length) throw new SourceError('shopify', `shopifyql: ${parseErrors[0]}`, 200, d)
+    // One object per day, keyed by column name. PERCENT is a 0-1 fraction (bounce_rate "1.0" = 2 of 2 sessions, rehearsal
+    // 2026-09-14), the same unit as the view's orders/sessions fallback. Days with no sessions come back null: keep null.
+    const rows: Json[] = d?.shopifyqlQuery?.tableData?.rows ?? []
     return {
-      raw: rows.map((r: Json) => ({ entity, externalId: String(r[0]), payload: { day: r[0], sessions: Number(r[1] ?? 0), conversion_rate: Number(r[2] ?? 0) } })),
+      raw: rows.map((r: Json) => ({ entity, externalId: String(r.day), payload: { day: r.day, sessions: Number(r.sessions ?? 0), conversion_rate: r.conversion_rate == null ? null : Number(r.conversion_rate) } })),
       after: null, hasNext: false,
     }
   }
@@ -237,7 +241,7 @@ export const shopify: Connector = {
       } else if (r.entity === 'sessions_day') {
         dailyMetrics.push({ day: p.day, entity_kind: 'store', entity_id: 'store', metric: 'sessions', value: Number(p.sessions ?? 0) })
         if (p.conversion_rate != null) {
-          dailyMetrics.push({ day: p.day, entity_kind: 'store', entity_id: 'store', metric: 'conversion_rate', value: Number(p.conversion_rate) / 100 })
+          dailyMetrics.push({ day: p.day, entity_kind: 'store', entity_id: 'store', metric: 'conversion_rate', value: Number(p.conversion_rate) })
         }
       }
     }
