@@ -68,10 +68,11 @@ Costs and risks:
   and exchange within minutes.
 - Custom distribution is one store (or one Plus org) per app → one Dev Dashboard app per client. Fine
   until the public app (REQUIREMENTS "Still open") is worth building.
-- **Doc ambiguity:** Shopify lists custom distribution as *"Installed on a single Shopify store, on
-  multiple stores that belong to the same Plus organization, or on transfer-disabled development
-  stores."* One reading limits the single store to dev/Plus stores; SB is on Basic. Settle it by
-  generating the link (step 2) — 5 minutes, before anything else.
+- **Basic plan accepted — confirmed 2026-09-14.** Shopify lists custom distribution as *"Installed on
+  a single Shopify store, on multiple stores that belong to the same Plus organization, or on
+  transfer-disabled development stores."* Generating the link for `saunaboy-2` (Basic, no Plus org)
+  succeeded, so the single-store reading holds. The "Allow multi-store install for one Plus
+  organization" box is ticked by default and locks with the link; on a non-Plus store it changes nothing.
 
 ## Option B — client credentials from an app in SB's own organization
 
@@ -105,9 +106,10 @@ store.
 
 ## Open items before connection day
 
-1. **Link check (Nate, 5 min):** create the app, generate a custom distribution link for SB's
-   confirmed live store domain. Refused → switch to B. Also confirm with Declan which store is live
-   (`saunaboy-2` is Basic, 0 orders, password-protected).
+1. **Link check — DONE 2026-09-14.** Custom distribution selected on `bcns-data`; link generated for
+   `saunaboy-2.myshopify.com` and accepted on Basic, so Option B is not needed. Nate confirmed it is
+   SB's real store: it redirects to `saunaboy.com`, still password-protected and pre-launch (0 orders,
+   payments not set up), so the first pull finds no data.
 2. **Rehearse on a bcns dev store first — DONE 2026-09-14** (`bcns-data-dev`, app version
    `bcns-data-3`, 6 scopes): hmac + state OK, exchange returned no `expires_in`/`refresh_token`,
    S1 PASS, S2 FAIL as expected (see "Learned" above), S4 `ACCESS_DENIED` → Level 2 needed. Re-run
